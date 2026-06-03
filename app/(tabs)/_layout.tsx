@@ -1,11 +1,18 @@
 import { SymbolView } from 'expo-symbols';
-import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
+import { Tabs } from 'expo-router';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 
+/**
+ * Tab Layout
+ *
+ * Defines the bottom tab navigator with 3 tabs:
+ * 1. Explore (index) — compass icon — main screen for starting new trips
+ * 2. Trips (trips) — map icon — trip history & management
+ * 3. Settings (settings) — gear icon — app preferences
+ */
 export default function TabLayout() {
   const colorScheme = useColorScheme();
 
@@ -20,44 +27,47 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tab One',
+          title: 'Explore',
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
+                ios: 'safari',
+                android: 'explore',
+                web: 'explore',
               }}
               tintColor={color}
               size={28}
             />
           ),
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable style={{ marginRight: 15 }}>
-                {({ pressed }) => (
-                  <SymbolView
-                    name={{ ios: 'info.circle', android: 'info', web: 'info' }}
-                    size={25}
-                    tintColor={Colors[colorScheme].text}
-                    style={{ opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
+        }}
+      />
+      <Tabs.Screen
+        name="trips"
+        options={{
+          title: 'Trips',
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{
+                ios: 'map',
+                android: 'map',
+                web: 'map',
+              }}
+              tintColor={color}
+              size={28}
+            />
           ),
         }}
       />
       <Tabs.Screen
-        name="two"
+        name="settings"
         options={{
-          title: 'Tab Two',
+          title: 'Settings',
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
+                ios: 'gearshape',
+                android: 'settings',
+                web: 'settings',
               }}
               tintColor={color}
               size={28}

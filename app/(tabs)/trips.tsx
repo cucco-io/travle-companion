@@ -3,33 +3,37 @@ import { StyleSheet } from 'react-native';
 import { Text, View } from '@/components/Themed';
 
 /**
- * Explore Screen (Home Tab)
+ * Trips Screen (Trip History Tab)
  *
- * This is the main entry point of the app. Users come here to start a new trip.
+ * Displays the user's trip history — past, active, and prepared trips.
  *
  * TODO for implementer:
- * - Display a search bar / destination picker at the top
- * - Show a "Start New Trip" CTA button
- * - Two trip mode options: "Explore a City" and "Road Trip"
- * - Quick-start suggestions (popular destinations, recent searches)
- * - Current location indicator with a small map preview
- * - If there's an active trip, show a "Resume Trip" banner at the top
+ * - FlatList of Trip cards sorted by created_at (newest first)
+ * - Each card shows: trip name, destination, status badge, date, POI count
+ * - Status badges: 'Preparing' (yellow), 'Ready' (blue), 'Active' (green), 'Completed' (gray)
+ * - Tap a trip card to navigate:
+ *   - 'preparing' → trip/prepare.tsx (resume preparation)
+ *   - 'ready' → trip/active.tsx (start the trip)
+ *   - 'active' → trip/active.tsx (resume the trip)
+ *   - 'completed' → trip/review.tsx (view trip summary)
+ * - Swipe-to-delete with confirmation dialog
+ * - Empty state: "No trips yet — start exploring!"
+ * - Pull-to-refresh
  *
- * Navigation:
- * - "Start New Trip" → app/trip/prepare.tsx (preparation screen)
- * - "Resume Trip" → app/trip/active.tsx (active travel screen)
+ * Data source:
+ * - src/services/storage/tripStorage.ts → listTrips()
  */
-export default function ExploreScreen() {
+export default function TripsScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Explore</Text>
+      <Text style={styles.title}>My Trips</Text>
       <View style={styles.separator} lightColor="#eee" darkColor="rgba(255,255,255,0.1)" />
       <Text style={styles.description}>
-        Start a new adventure! Search for a destination or choose a road trip route.
+        Your trip history will appear here.
       </Text>
       <View style={styles.placeholder}>
-        <Text style={styles.placeholderText}>🧭</Text>
-        <Text style={styles.placeholderLabel}>Destination picker goes here</Text>
+        <Text style={styles.placeholderText}>🗺️</Text>
+        <Text style={styles.placeholderLabel}>Trip list goes here</Text>
       </View>
     </View>
   );
