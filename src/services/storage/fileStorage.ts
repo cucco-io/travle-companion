@@ -12,6 +12,26 @@
  * - expo-file-system (FileSystem.documentDirectory, downloadAsync, deleteAsync, etc.)
  */
 
+import * as FileSystem from 'expo-file-system/legacy';
+
+declare const Buffer: any;
+
+/**
+ * Helper function to convert ArrayBuffer to Base64 string.
+ * Works in both Node.js (Jest) and React Native environment.
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(buffer).toString('base64');
+  }
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 /**
  * Returns the base directory path for a trip's cached files.
  *
@@ -23,8 +43,13 @@
  * // → "{documentDirectory}/trips/abc-123/"
  */
 export function getTripDirectory(tripId: string): string {
-  // TODO: Implement using FileSystem.documentDirectory
-  throw new Error('Not implemented');
+  if (!FileSystem.documentDirectory) {
+    throw new Error('FileSystem.documentDirectory is not defined');
+  }
+  const base = FileSystem.documentDirectory.endsWith('/')
+    ? FileSystem.documentDirectory
+    : `${FileSystem.documentDirectory}/`;
+  return `${base}trips/${tripId}/`;
 }
 
 /**
@@ -39,8 +64,7 @@ export function getTripDirectory(tripId: string): string {
  * // → "{documentDirectory}/trips/abc-123/audio/poi-456.mp3"
  */
 export function getAudioFilePath(tripId: string, poiId: string): string {
-  // TODO: Implement audio file path construction
-  throw new Error('Not implemented');
+  return `${getTripDirectory(tripId)}audio/${poiId}.mp3`;
 }
 
 /**
@@ -51,8 +75,7 @@ export function getAudioFilePath(tripId: string, poiId: string): string {
  * @returns Absolute path to the image file
  */
 export function getImageFilePath(tripId: string, poiId: string): string {
-  // TODO: Implement image file path construction
-  throw new Error('Not implemented');
+  return `${getTripDirectory(tripId)}images/${poiId}.jpg`;
 }
 
 /**
@@ -65,8 +88,9 @@ export function getImageFilePath(tripId: string, poiId: string): string {
  * - Use FileSystem.makeDirectoryAsync with intermediates: true
  */
 export async function ensureTripDirectories(tripId: string): Promise<void> {
-  // TODO: Implement directory creation
-  throw new Error('Not implemented');
+  const tripDir = getTripDirectory(tripId);
+  await FileSystem.makeDirectoryAsync(`${tripDir}audio/`, { intermediates: true });
+  await FileSystem.makeDirectoryAsync(`${tripDir}images/`, { intermediates: true });
 }
 
 /**
@@ -85,8 +109,19 @@ export async function downloadFile(
   url: string,
   localPath: string
 ): Promise<{ path: string; sizeBytes: number } | null> {
-  // TODO: Implement file download
-  throw new Error('Not implemented');
+  try {
+    const result = await FileSystem.downloadAsync(url, localPath);
+    if (result.status >= 200 && result.status < 300) {
+      const info = await FileSystem.getInfoAsync(localPath);
+      if (info.exists && !info.isDirectory && info.size !== undefined) {
+        return { path: localPath, sizeBytes: info.size };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error(`Failed to download file from ${url}:`, error);
+    return null;
+  }
 }
 
 /**
@@ -104,8 +139,14 @@ export async function saveBase64File(
   base64Content: string,
   localPath: string
 ): Promise<{ path: string; sizeBytes: number }> {
-  // TODO: Implement base64 file save
-  throw new Error('Not implemented');
+  await FileSystem.writeAsStringAsync(localPath, base64Content, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const info = await FileSystem.getInfoAsync(localPath);
+  if (!info.exists || info.isDirectory || info.size === undefined) {
+    throw new Error(`Failed to verify written base64 file at ${localPath}`);
+  }
+  return { path: localPath, sizeBytes: info.size };
 }
 
 /**
@@ -118,8 +159,8 @@ export async function saveBase64File(
  * - Use FileSystem.deleteAsync with idempotent: true
  */
 export async function deleteTripFiles(tripId: string): Promise<void> {
-  // TODO: Implement trip file cleanup
-  throw new Error('Not implemented');
+  const tripDir = getTripDirectory(tripId);
+  await FileSystem.deleteAsync(tripDir, { idempotent: true });
 }
 
 /**
@@ -134,8 +175,8 @@ export async function deleteTripFiles(tripId: string): Promise<void> {
  * - Return size in MB (bytes / 1024 / 1024)
  */
 export async function getTripFileSizeMB(tripId: string): Promise<number> {
-  // TODO: Implement size calculation
-  throw new Error('Not implemented');
+  const bytes = await getTripStorageSize(tripId);
+  return bytes / (1024 * 1024);
 }
 
 /**
@@ -145,6 +186,107 @@ export async function getTripFileSizeMB(tripId: string): Promise<number> {
  * @returns True if the file exists
  */
 export async function fileExists(filePath: string): Promise<boolean> {
-  // TODO: Implement using FileSystem.getInfoAsync
-  throw new Error('Not implemented');
+  const info = await FileSystem.getInfoAsync(filePath);
+  return info.exists && !info.isDirectory;
+}
+
+/**
+ * Additional functions requested by user
+ */
+
+/**
+ * Saves binary audio file data to a local file.
+ *
+ * @param tripId - The trip's unique ID
+ * @param poiId - The POI's unique ID
+ * @param audioData - The audio file's binary content
+ * @returns Path to the saved file
+ */
+export async function saveAudioFile(
+  tripId: string,
+  poiId: string,
+  audioData: ArrayBuffer
+): Promise<string> {
+  await ensureTripDirectories(tripId);
+  const localPath = getAudioFilePath(tripId, poiId);
+  await saveBase64File(arrayBufferToBase64(audioData), localPath);
+  return localPath;
+}
+
+/**
+ * Saves binary image file data to a local file.
+ *
+ * @param tripId - The trip's unique ID
+ * @param poiId - The POI's unique ID
+ * @param imageData - The image file's binary content
+ * @returns Path to the saved file
+ */
+export async function saveImageFile(
+  tripId: string,
+  poiId: string,
+  imageData: ArrayBuffer
+): Promise<string> {
+  await ensureTripDirectories(tripId);
+  const localPath = getImageFilePath(tripId, poiId);
+  await saveBase64File(arrayBufferToBase64(imageData), localPath);
+  return localPath;
+}
+
+/**
+ * Returns the local file path for a POI's media file.
+ *
+ * @param tripId - The trip's unique ID
+ * @param type - File type ('audio' or 'image')
+ * @param poiId - The POI's unique ID
+ * @returns Path to the media file
+ */
+export function getFilePath(
+  tripId: string,
+  type: 'audio' | 'image',
+  poiId: string
+): string {
+  if (type === 'audio') {
+    return getAudioFilePath(tripId, poiId);
+  } else if (type === 'image') {
+    return getImageFilePath(tripId, poiId);
+  }
+  throw new Error(`Invalid type: ${type}`);
+}
+
+/**
+ * Returns the total storage size of cached files for a trip in bytes.
+ *
+ * @param tripId - The trip's unique ID
+ * @returns Total size in bytes
+ */
+export async function getTripStorageSize(tripId: string): Promise<number> {
+  const tripDir = getTripDirectory(tripId);
+  const dirInfo = await FileSystem.getInfoAsync(tripDir);
+  if (!dirInfo.exists) {
+    return 0;
+  }
+
+  let totalBytes = 0;
+  const subDirs = ['audio', 'images'];
+  
+  for (const subDir of subDirs) {
+    const subDirUri = `${tripDir}${subDir}/`;
+    try {
+      const subDirInfo = await FileSystem.getInfoAsync(subDirUri);
+      if (subDirInfo.exists && subDirInfo.isDirectory) {
+        const files = await FileSystem.readDirectoryAsync(subDirUri);
+        for (const file of files) {
+          const fileUri = `${subDirUri}${file}`;
+          const fileInfo = await FileSystem.getInfoAsync(fileUri);
+          if (fileInfo.exists && !fileInfo.isDirectory && fileInfo.size !== undefined) {
+            totalBytes += fileInfo.size;
+          }
+        }
+      }
+    } catch (e) {
+      // Directory might not exist, ignore
+    }
+  }
+
+  return totalBytes;
 }
