@@ -10,6 +10,26 @@
  */
 
 /**
+ * Converts degrees to radians.
+ *
+ * @param degrees - Angle in degrees
+ * @returns Angle in radians
+ */
+export function toRadians(degrees: number): number {
+  return degrees * (Math.PI / 180);
+}
+
+/**
+ * Converts radians to degrees.
+ *
+ * @param radians - Angle in radians
+ * @returns Angle in degrees
+ */
+export function toDegrees(radians: number): number {
+  return radians * (180 / Math.PI);
+}
+
+/**
  * Calculates the great-circle distance between two coordinates
  * using the Haversine formula.
  *
@@ -18,16 +38,6 @@
  * @param lat2 - Latitude of point 2 (degrees)
  * @param lng2 - Longitude of point 2 (degrees)
  * @returns Distance in meters
- *
- * Implementation notes:
- * - Use the Haversine formula: https://en.wikipedia.org/wiki/Haversine_formula
- * - Earth radius: 6,371,000 meters (mean radius)
- * - Convert degrees to radians before calculation
- * - Accuracy: ~0.5% error at worst (sufficient for our use case)
- *
- * @example
- * haversineDistance(41.8902, 12.4922, 43.7696, 11.2558)
- * // → ~231,000 meters (Rome to Florence)
  */
 export function haversineDistance(
   lat1: number,
@@ -35,14 +45,17 @@ export function haversineDistance(
   lat2: number,
   lng2: number
 ): number {
-  // TODO: Implement Haversine formula
-  // const R = 6_371_000; // Earth's radius in meters
-  // const dLat = toRadians(lat2 - lat1);
-  // const dLng = toRadians(lng2 - lng1);
-  // const a = Math.sin(dLat/2)^2 + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng/2)^2;
-  // const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  // return R * c;
-  throw new Error('Not implemented');
+  const R = 6371000; // Earth's radius in meters
+  const dLat = toRadians(lat2 - lat1);
+  const dLng = toRadians(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 /**
@@ -53,13 +66,6 @@ export function haversineDistance(
  * @param lat2 - Latitude of point 2 (degrees)
  * @param lng2 - Longitude of point 2 (degrees)
  * @returns Bearing in degrees (0–360, where 0 = North, 90 = East)
- *
- * Implementation notes:
- * - Formula: θ = atan2(sin(Δλ)·cos(φ2), cos(φ1)·sin(φ2) − sin(φ1)·cos(φ2)·cos(Δλ))
- * - Normalize result to 0–360 range
- * - Used for determining which direction a POI is relative to the user
- *
- * @see https://www.movable-type.co.uk/scripts/latlong.html
  */
 export function bearing(
   lat1: number,
@@ -67,8 +73,18 @@ export function bearing(
   lat2: number,
   lng2: number
 ): number {
-  // TODO: Implement bearing calculation
-  throw new Error('Not implemented');
+  const phi1 = toRadians(lat1);
+  const phi2 = toRadians(lat2);
+  const lambda1 = toRadians(lng1);
+  const lambda2 = toRadians(lng2);
+  const deltaLambda = lambda2 - lambda1;
+
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x =
+    Math.cos(phi1) * Math.sin(phi2) -
+    Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+  const theta = Math.atan2(y, x);
+  return (toDegrees(theta) + 360) % 360;
 }
 
 /**
@@ -76,76 +92,111 @@ export function bearing(
  *
  * @param encoded - The encoded polyline string from the Directions API
  * @returns Array of {lat, lng} coordinate objects
- *
- * Implementation notes:
- * - Google's Polyline Encoding Algorithm:
- *   https://developers.google.com/maps/documentation/utilities/polylinealgorithm
- * - The encoding uses variable-length encoding with ASCII offset
- * - Precision: 5 decimal places (1e-5)
- * - Common implementation: iterate through chars, decode pairs of lat/lng deltas
- *
- * @example
- * decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@')
- * // → [{lat: 38.5, lng: -120.2}, {lat: 40.7, lng: -120.95}, {lat: 43.252, lng: -126.453}]
  */
 export function decodePolyline(
   encoded: string
 ): Array<{ lat: number; lng: number }> {
-  // TODO: Implement Google polyline decoding algorithm
-  // Reference: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
-  throw new Error('Not implemented');
+  const points = [];
+  let index = 0;
+  const len = encoded.length;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < len) {
+    let b;
+    let shift = 0;
+    let result = 0;
+    do {
+      if (index >= len) {
+        return points;
+      }
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      if (index >= len) {
+        return points;
+      }
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    lng += dlng;
+
+    points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+
+  return points;
 }
 
 /**
  * Samples points at regular distance intervals along an encoded polyline.
  *
- * Used in route mode to determine where to search for POIs along the driving route.
- * For example, with a 24km interval on a 240km route, this returns ~10 sample points.
- *
  * @param encodedPolyline - Google-encoded polyline string
  * @param intervalMeters - Distance between sample points in meters
  * @returns Array of {lat, lng} sample points along the route
- *
- * Implementation notes:
- * 1. Decode the polyline using decodePolyline()
- * 2. Walk along the decoded points, accumulating distance
- * 3. Whenever accumulated distance ≥ intervalMeters, record that point
- * 4. Reset the accumulator and continue
- * 5. Always include the first and last points
- * - Use haversineDistance() between consecutive decoded points
- * - Handle edge case: if total route distance < intervalMeters, return start + end
- *
- * @see CONFIG.API.ROUTE_SAMPLE_INTERVAL_METERS for the default interval
  */
 export function samplePointsAlongPolyline(
   encodedPolyline: string,
   intervalMeters: number
 ): Array<{ lat: number; lng: number }> {
-  // TODO: Implement polyline sampling
-  // 1. Decode the polyline
-  // 2. Walk along segments, accumulating distance
-  // 3. Emit sample points at each interval threshold
-  throw new Error('Not implemented');
-}
+  const points = decodePolyline(encodedPolyline);
+  if (points.length === 0) return [];
+  if (points.length === 1) return [points[0]];
 
-/**
- * Converts degrees to radians.
- *
- * @param degrees - Angle in degrees
- * @returns Angle in radians
- */
-export function toRadians(degrees: number): number {
-  // TODO: return degrees * (Math.PI / 180);
-  throw new Error('Not implemented');
-}
+  const sampled = [];
+  sampled.push(points[0]);
 
-/**
- * Converts radians to degrees.
- *
- * @param radians - Angle in radians
- * @returns Angle in degrees
- */
-export function toDegrees(radians: number): number {
-  // TODO: return radians * (180 / Math.PI);
-  throw new Error('Not implemented');
+  let currentPt = points[0];
+  let nextPtIdx = 1;
+  let remainingMeters = intervalMeters;
+
+  while (nextPtIdx < points.length) {
+    const nextPt = points[nextPtIdx];
+    const dist = haversineDistance(
+      currentPt.lat,
+      currentPt.lng,
+      nextPt.lat,
+      nextPt.lng
+    );
+
+    if (dist === 0) {
+      nextPtIdx++;
+      continue;
+    }
+
+    if (dist < remainingMeters) {
+      remainingMeters -= dist;
+      currentPt = nextPt;
+      nextPtIdx++;
+    } else {
+      const fraction = remainingMeters / dist;
+      const lat = currentPt.lat + fraction * (nextPt.lat - currentPt.lat);
+      const lng = currentPt.lng + fraction * (nextPt.lng - currentPt.lng);
+      const interpolatedPt = { lat, lng };
+
+      sampled.push(interpolatedPt);
+      currentPt = interpolatedPt;
+      remainingMeters = intervalMeters;
+    }
+  }
+
+  const lastPt = points[points.length - 1];
+  const lastSampled = sampled[sampled.length - 1];
+  const isDuplicate =
+    Math.abs(lastSampled.lat - lastPt.lat) < 1e-7 &&
+    Math.abs(lastSampled.lng - lastPt.lng) < 1e-7;
+
+  if (!isDuplicate) {
+    sampled.push(lastPt);
+  }
+
+  return sampled;
 }
