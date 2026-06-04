@@ -73,6 +73,7 @@ export function createNarrationQueue(
   let playbackStatus: PlaybackStatus = 'idle';
   let queue: POI[] = [];
   let lastPlayedAt: number = 0;
+  let lastTriggeredAt: number = 0;
   let isPaused: boolean = false;
   let log: TripLogEntry[] = [];
 
@@ -149,7 +150,7 @@ export function createNarrationQueue(
     if (queue.length === 0) return;
 
     const now = Date.now();
-    const timeSinceLast = now - lastPlayedAt;
+    const timeSinceLast = now - lastTriggeredAt;
 
     if (!bypassCooldown && timeSinceLast < cooldownMs) {
       if (cooldownTimeout) {
@@ -165,6 +166,7 @@ export function createNarrationQueue(
     currentPOI = poi;
     isPlayingChime = true;
     playbackStatus = 'playing';
+    lastTriggeredAt = Date.now();
     onStateChange(getState());
     onNarrationStart?.(poi);
 
@@ -317,6 +319,8 @@ export function createNarrationQueue(
     currentPOI = null;
     playbackStatus = 'idle';
     isPaused = false;
+    lastTriggeredAt = 0;
+    lastPlayedAt = 0;
     onStateChange(getState());
     if (poi) {
       onNarrationEnd?.(poi);

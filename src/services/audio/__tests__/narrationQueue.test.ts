@@ -178,6 +178,42 @@ describe('narrationQueue', () => {
       );
     });
 
+    it('measures cooldown from the start of the narration trigger, not the end', async () => {
+      const stateChangeCallback = jest.fn();
+      const queue = createNarrationQueue(stateChangeCallback);
+
+      // Play the first POI (starts at t = 0)
+      queue.enqueue(mockPoi1);
+
+      // Flush microtasks
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Advance time by 30 seconds while narration is playing
+      jest.advanceTimersByTime(30000);
+
+      // Simulate completion of first narration at t = 30 seconds
+      const statusCallback = (playAudioFile as jest.Mock).mock.calls[0][1];
+      statusCallback('finished');
+
+      // Now enqueue the second POI
+      queue.enqueue(mockPoi2);
+
+      // Speech.speak should not be called immediately because of 2-minute cooldown from start (t = 0)
+      expect(Speech.speak).toHaveBeenCalledTimes(1);
+
+      // Fast forward time by another 90 seconds (reaches t = 120 seconds since trigger start)
+      jest.advanceTimersByTime(90000);
+
+      // Now it should play the second POI
+      expect(Speech.speak).toHaveBeenCalledTimes(2);
+      expect(Speech.speak).toHaveBeenLastCalledWith(
+        'Coming up next: Pantheon',
+        expect.any(Object)
+      );
+    });
+
     it('bypasses cooldown when skip is called', async () => {
       const stateChangeCallback = jest.fn();
       const queue = createNarrationQueue(stateChangeCallback);

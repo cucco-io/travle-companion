@@ -30,7 +30,7 @@ export interface NarrationPlayerState {
  *
  * @returns Object with player state and control functions
  */
-export function useNarrationPlayer(): NarrationPlayerState & {
+export function useNarrationPlayer(pauseOnNavigation: boolean = false): NarrationPlayerState & {
   enqueue: (poi: POI) => void;
   skip: () => void;
   pause: () => void;
@@ -48,10 +48,6 @@ export function useNarrationPlayer(): NarrationPlayerState & {
   const queueRef = useRef<ReturnType<typeof createNarrationQueue> | null>(null);
 
   useEffect(() => {
-    // Configure audio session and ducking on mount
-    configureAudioSession().catch(() => {});
-    setDuckingMode('duck').catch(() => {});
-
     const queueInstance = createNarrationQueue((state) => {
       setCurrentPOI(state.currentPOI);
       setPlaybackStatus(state.playbackStatus);
@@ -77,6 +73,19 @@ export function useNarrationPlayer(): NarrationPlayerState & {
       releaseAudioResources().catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+    const initAudio = async () => {
+      try {
+        await configureAudioSession();
+        const mode = pauseOnNavigation ? 'pause' : 'duck';
+        await setDuckingMode(mode);
+      } catch (e) {
+        // ignore
+      }
+    };
+    initAudio();
+  }, [pauseOnNavigation]);
 
   const enqueue = (poi: POI) => {
     if (queueRef.current) {

@@ -78,8 +78,13 @@ describe('useNarrationPlayer hook', () => {
     jest.restoreAllMocks();
   });
 
-  it('initializes narration queue and session configs on mount', () => {
+  it('initializes narration queue and session configs on mount', async () => {
     const result = useNarrationPlayer();
+
+    // Flush microtasks
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(configureAudioSession).toHaveBeenCalled();
     expect(setDuckingMode).toHaveBeenCalledWith('duck');
@@ -135,5 +140,16 @@ describe('useNarrationPlayer hook', () => {
 
     player.stop();
     expect(mockQueueInstance.stop).toHaveBeenCalled();
+  });
+
+  it('configures ducking mode as pause when pauseOnNavigation is true', async () => {
+    useNarrationPlayer(true);
+
+    // Flush microtasks
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(setDuckingMode).toHaveBeenCalledWith('pause');
   });
 });
