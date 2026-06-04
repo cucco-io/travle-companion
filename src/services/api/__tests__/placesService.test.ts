@@ -180,6 +180,47 @@ describe('placesService', () => {
       expect(pois[0].name).toBe('Louvre');
       expect(pois[0].category).toBe('museum');
     });
+
+    it('should sort results by user_ratings_total descending', async () => {
+      const mockResponse = {
+        results: [
+          {
+            place_id: 'poi-low',
+            name: 'Low Popularity POI',
+            geometry: { location: { lat: 48.8606, lng: 2.3376 } },
+            user_ratings_total: 10,
+            types: ['museum'],
+          },
+          {
+            place_id: 'poi-high',
+            name: 'High Popularity POI',
+            geometry: { location: { lat: 48.8606, lng: 2.3376 } },
+            user_ratings_total: 1000,
+            types: ['museum'],
+          },
+          {
+            place_id: 'poi-med',
+            name: 'Medium Popularity POI',
+            geometry: { location: { lat: 48.8606, lng: 2.3376 } },
+            user_ratings_total: 100,
+            types: ['museum'],
+          },
+        ],
+        status: 'OK',
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      const pois = await fetchNearbyPOIs(48.8606, 2.3376, 500, ['history']);
+
+      expect(pois).toHaveLength(3);
+      expect(pois[0].name).toBe('High Popularity POI');
+      expect(pois[1].name).toBe('Medium Popularity POI');
+      expect(pois[2].name).toBe('Low Popularity POI');
+    });
   });
 
   describe('fetchPOIsAlongRoute', () => {

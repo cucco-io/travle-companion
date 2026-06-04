@@ -303,8 +303,14 @@ export async function fetchNearbyPOIs(
     } while (nextPageToken && pageCount < 3);
   }
 
+  const sortedPlaces = Array.from(allPlacesMap.values()).sort((a, b) => {
+    const totalA = a.user_ratings_total ?? 0;
+    const totalB = b.user_ratings_total ?? 0;
+    return totalB - totalA;
+  });
+
   const pois: POI[] = [];
-  for (const place of allPlacesMap.values()) {
+  for (const place of sortedPlaces) {
     pois.push(transformPlaceToPOI(place, 100)); // Default trigger radius for nearby POIs
   }
 
