@@ -14,8 +14,15 @@
  * - src/types/trip.ts (GpsBreadcrumb)
  */
 
+import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
+import { CONFIG } from '../../constants/config';
 import { GpsBreadcrumb } from '../../types/trip';
 import { POI } from '../../types/poi';
+import { addBreadcrumb } from '../storage/tripStorage';
+import { haversineDistance } from '../../utils/geo';
+
+export const BACKGROUND_LOCATION_TASK = 'background-location-task';
 
 /**
  * GPS accuracy mode — determines power consumption vs. precision tradeoff.
@@ -32,76 +39,169 @@ export type LocationUpdateCallback = (location: {
   timestamp: number;
 }) => void;
 
+let currentSubscription: Location.LocationSubscription | null = null;
+let currentCallback: LocationUpdateCallback | null = null;
+let currentMode: GpsAccuracyMode = 'power_saving';
+let isTrackingActive = false;
+let currentTripId: string | null = null;
+let lastBreadcrumbTime = 0;
+
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error('Background location task error:', error);
+    return;
+  }
+  if (data) {
+    const { locations } = data as { locations: Location.LocationObject[] };
+    if (!locations || locations.length === 0) return;
+
+    for (const location of locations) {
+      const lat = location.coords.latitude;
+      const lng = location.coords.longitude;
+      const accuracy = location.coords.accuracy || 0;
+      const timestamp = location.timestamp;
+
+      if (currentCallback) {
+        currentCallback({ lat, lng, accuracy, timestamp });
+      }
+
+      const now = Date.now();
+      if (currentTripId && now - lastBreadcrumbTime >= 30000) {
+        lastBreadcrumbTime = now;
+        const breadcrumb = createBreadcrumb(lat, lng);
+        try {
+          await addBreadcrumb(currentTripId, breadcrumb);
+        } catch (err) {
+          console.error('Failed to add background breadcrumb to SQLite:', err);
+        }
+      }
+    }
+  }
+});
+
+/**
+ * Helper to start or restart the location subscription.
+ */
+async function startLocationWatch(): Promise<void> {
+  if (currentSubscription) {
+    await currentSubscription.remove();
+    currentSubscription = null;
+  }
+
+  if (!isTrackingActive) return;
+
+  const options: Location.LocationOptions = {
+    accuracy:
+      currentMode === 'high_accuracy'
+        ? Location.Accuracy.High
+        : Location.Accuracy.Low,
+    timeInterval: currentMode === 'high_accuracy' ? 3000 : 30000,
+    distanceInterval:
+      currentMode === 'high_accuracy'
+        ? 10
+        : CONFIG.GPS.SIGNIFICANT_CHANGE_METERS,
+  };
+
+  currentSubscription = await Location.watchPositionAsync(
+    options,
+    async (location) => {
+      if (!currentCallback) return;
+
+      const lat = location.coords.latitude;
+      const lng = location.coords.longitude;
+      const accuracy = location.coords.accuracy || 0;
+      const timestamp = location.timestamp;
+
+      currentCallback({ lat, lng, accuracy, timestamp });
+
+      const now = Date.now();
+      if (currentTripId && now - lastBreadcrumbTime >= 30000) {
+        lastBreadcrumbTime = now;
+        const breadcrumb = createBreadcrumb(lat, lng);
+        try {
+          await addBreadcrumb(currentTripId, breadcrumb);
+        } catch (err) {
+          console.error('Failed to add breadcrumb to SQLite:', err);
+        }
+      }
+    }
+  );
+
+  const backgroundOptions: Location.LocationTaskOptions = {
+    accuracy:
+      currentMode === 'high_accuracy'
+        ? Location.Accuracy.High
+        : Location.Accuracy.Low,
+    timeInterval: currentMode === 'high_accuracy' ? 3000 : 30000,
+    distanceInterval:
+      currentMode === 'high_accuracy'
+        ? 10
+        : CONFIG.GPS.SIGNIFICANT_CHANGE_METERS,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: 'Travel Companion Tracking',
+      notificationBody: 'Tracking your location to narrate surrounding landmarks.',
+      notificationColor: '#3b82f6',
+    },
+  };
+
+  try {
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, backgroundOptions);
+  } catch (err) {
+    console.error('Failed to start background location updates:', err);
+  }
+}
+
 /**
  * Starts GPS tracking with adaptive power management.
- *
- * @param onLocationUpdate - Callback fired on each location update
- * @param initialMode - Starting accuracy mode (default: 'power_saving')
- * @returns A cleanup function to stop tracking
- *
- * Implementation notes:
- * - Use expo-location's Location.watchPositionAsync()
- * - In 'power_saving' mode:
- *   - accuracy: Location.Accuracy.Balanced
- *   - distanceInterval: CONFIG.GPS.SIGNIFICANT_CHANGE_METERS (500m)
- *   - timeInterval: 30_000 (30 seconds)
- * - In 'high_accuracy' mode:
- *   - accuracy: Location.Accuracy.BestForNavigation
- *   - distanceInterval: 10 (10 meters)
- *   - timeInterval: 3_000 (3 seconds)
- * - Request foreground location permissions before starting
- * - Handle permission denied gracefully
- *
- * @throws Error if location permissions are denied
  */
 export async function startTracking(
   onLocationUpdate: LocationUpdateCallback,
-  initialMode?: GpsAccuracyMode
+  initialMode: GpsAccuracyMode = 'power_saving',
+  tripId?: string
 ): Promise<() => void> {
-  // TODO: Implement GPS tracking with expo-location
-  // 1. Request foreground location permissions
-  // 2. Start Location.watchPositionAsync with mode-appropriate options
-  // 3. Return a cleanup function that calls subscription.remove()
-  throw new Error('Not implemented');
+  const hasPerm = await requestLocationPermissions();
+  if (!hasPerm) {
+    throw new Error('Location permissions denied');
+  }
+
+  currentCallback = onLocationUpdate;
+  currentMode = initialMode;
+  currentTripId = tripId || null;
+  isTrackingActive = true;
+  lastBreadcrumbTime = 0;
+
+  await startLocationWatch();
+
+  return () => {
+    isTrackingActive = false;
+    currentTripId = null;
+    currentCallback = null;
+    if (currentSubscription) {
+      currentSubscription.remove();
+      currentSubscription = null;
+    }
+    Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch((err) => {
+      console.error('Failed to stop background location updates:', err);
+    });
+  };
 }
 
 /**
  * Switches the GPS tracking accuracy mode.
- *
- * Called by the proximity engine when the user gets close to a POI
- * (switch to high_accuracy) or moves far away (switch to power_saving).
- *
- * @param mode - The new accuracy mode
- *
- * Implementation notes:
- * - Stop the current location subscription
- * - Start a new subscription with the new mode's settings
- * - This transition should be seamless (no gap in tracking)
- * - Log mode switches for debugging
  */
 export async function switchAccuracyMode(
   mode: GpsAccuracyMode
 ): Promise<void> {
-  // TODO: Implement mode switching
-  // 1. Remove current location subscription
-  // 2. Start new subscription with updated accuracy settings
-  throw new Error('Not implemented');
+  if (currentMode === mode) return;
+  currentMode = mode;
+  if (isTrackingActive) {
+    await startLocationWatch();
+  }
 }
 
 /**
  * Determines whether the GPS mode should switch based on distance to the next POI.
- *
- * @param currentLat - User's current latitude
- * @param currentLng - User's current longitude
- * @param nextPOI - The next upcoming POI
- * @param currentMode - The current GPS accuracy mode
- * @returns The mode that should be active (may be same as current)
- *
- * Implementation notes:
- * - Calculate distance to nextPOI using haversineDistance()
- * - If distance < CONFIG.GPS.HIGH_ACCURACY_THRESHOLD_METERS → 'high_accuracy'
- * - Otherwise → 'power_saving'
- * - Add hysteresis to avoid rapid switching (e.g., ±500m buffer)
  */
 export function determineAccuracyMode(
   currentLat: number,
@@ -109,42 +209,48 @@ export function determineAccuracyMode(
   nextPOI: POI,
   currentMode: GpsAccuracyMode
 ): GpsAccuracyMode {
-  // TODO: Implement mode determination with hysteresis
-  throw new Error('Not implemented');
+  const distance = haversineDistance(
+    currentLat,
+    currentLng,
+    nextPOI.coordinates.lat,
+    nextPOI.coordinates.lng
+  );
+
+  const threshold = CONFIG.GPS.HIGH_ACCURACY_THRESHOLD_METERS;
+  const buffer = 500; // Hysteresis buffer
+
+  if (currentMode === 'high_accuracy') {
+    if (distance > threshold + buffer) {
+      return 'power_saving';
+    }
+    return 'high_accuracy';
+  } else {
+    if (distance <= threshold) {
+      return 'high_accuracy';
+    }
+    return 'power_saving';
+  }
 }
 
 /**
  * Records a GPS breadcrumb for post-trip route visualization.
- *
- * @param lat - Current latitude
- * @param lng - Current longitude
- * @returns A GpsBreadcrumb object with the current timestamp
- *
- * Implementation notes:
- * - Create a breadcrumb with ISO 8601 timestamp
- * - These are stored in-memory during the trip and persisted on completion
- * - Consider downsampling if breadcrumbs accumulate too fast
  */
-export function createBreadcrumb(
-  lat: number,
-  lng: number
-): GpsBreadcrumb {
-  // TODO: Implement breadcrumb creation
-  throw new Error('Not implemented');
+export function createBreadcrumb(lat: number, lng: number): GpsBreadcrumb {
+  return {
+    timestamp: new Date().toISOString(),
+    lat,
+    lng,
+  };
 }
 
 /**
  * Requests location permissions from the user.
- *
- * @returns True if foreground location permission is granted
- *
- * Implementation notes:
- * - Use Location.requestForegroundPermissionsAsync()
- * - Check the `status` field of the response
- * - If denied, show a helpful message explaining why location is needed
- * - Consider also requesting background location for future features
  */
 export async function requestLocationPermissions(): Promise<boolean> {
-  // TODO: Implement permission request
-  throw new Error('Not implemented');
+  const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+  if (foregroundStatus !== 'granted') {
+    return false;
+  }
+  const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+  return backgroundStatus === 'granted';
 }
