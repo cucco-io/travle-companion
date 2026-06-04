@@ -3,13 +3,25 @@ import {
   isCooldownElapsed,
   createLogEntry,
 } from '../narrationQueue';
-import { playNarration } from '../audioPlayer';
+import {
+  playAudioFile,
+  playTTSFallback,
+  pauseAudio,
+  resumeAudio,
+  stopAudio,
+  seekAudio,
+} from '../audioPlayer';
 import * as Speech from 'expo-speech';
 import { POI } from '../../../types/poi';
 
 // Mock audioPlayer
 jest.mock('../audioPlayer', () => ({
-  playNarration: jest.fn(),
+  playAudioFile: jest.fn().mockResolvedValue(undefined),
+  playTTSFallback: jest.fn().mockResolvedValue(undefined),
+  pauseAudio: jest.fn().mockResolvedValue(undefined),
+  resumeAudio: jest.fn().mockResolvedValue(undefined),
+  stopAudio: jest.fn().mockResolvedValue(undefined),
+  seekAudio: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock expo-speech
@@ -26,6 +38,11 @@ jest.mock('expo-speech', () => ({
   stop: jest.fn().mockResolvedValue(undefined),
   pause: jest.fn().mockResolvedValue(undefined),
   resume: jest.fn().mockResolvedValue(undefined),
+}));
+
+// Mock expo-file-system
+jest.mock('expo-file-system/legacy', () => ({
+  getInfoAsync: jest.fn().mockResolvedValue({ exists: true }),
 }));
 
 const mockPoi1: POI = {
@@ -68,12 +85,6 @@ describe('narrationQueue', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
-    (playNarration as jest.Mock).mockResolvedValue({
-      pause: jest.fn().mockResolvedValue(undefined),
-      resume: jest.fn().mockResolvedValue(undefined),
-      stop: jest.fn().mockResolvedValue(undefined),
-      seek: jest.fn().mockResolvedValue(undefined),
-    });
   });
 
   afterEach(() => {
@@ -114,14 +125,19 @@ describe('narrationQueue', () => {
 
       queue.enqueue(mockPoi1);
 
+      // Flush microtasks
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
       // Verify speech for chime is called
       expect(Speech.speak).toHaveBeenCalledWith(
         'Coming up next: Colosseum',
         expect.any(Object)
       );
 
-      // Since speak is mocked to call onDone immediately, playNarration should have been called next
-      expect(playNarration).toHaveBeenCalledWith(mockPoi1, expect.any(Function));
+      // Since speak is mocked to call onDone immediately, playAudioFile should have been called next
+      expect(playAudioFile).toHaveBeenCalledWith('/path/colosseum.mp3', expect.any(Function));
 
       // Verify the state has updated
       const state = queue.getState();
@@ -129,15 +145,20 @@ describe('narrationQueue', () => {
       expect(state.queue).toHaveLength(0);
     });
 
-    it('respects cooldown and waits before playing next item', () => {
+    it('respects cooldown and waits before playing next item', async () => {
       const stateChangeCallback = jest.fn();
       const queue = createNarrationQueue(stateChangeCallback);
 
       // Play the first POI
       queue.enqueue(mockPoi1);
 
+      // Flush microtasks
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
       // Simulate completion of first narration
-      const statusCallback = (playNarration as jest.Mock).mock.calls[0][1];
+      const statusCallback = (playAudioFile as jest.Mock).mock.calls[0][1];
       statusCallback('finished');
 
       // Now enqueue the second POI
@@ -157,7 +178,7 @@ describe('narrationQueue', () => {
       );
     });
 
-    it('bypasses cooldown when skip is called', () => {
+    it('bypasses cooldown when skip is called', async () => {
       const stateChangeCallback = jest.fn();
       const queue = createNarrationQueue(stateChangeCallback);
 
@@ -167,8 +188,18 @@ describe('narrationQueue', () => {
       // Enqueue the second POI
       queue.enqueue(mockPoi2);
 
+      // Flush microtasks
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
       // Call skip
       queue.skip();
+
+      // Flush microtasks
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
 
       // Verify the first was skipped and the second plays immediately (bypassing cooldown)
       expect(Speech.speak).toHaveBeenCalledTimes(2);
@@ -186,27 +217,48 @@ describe('narrationQueue', () => {
       const stateChangeCallback = jest.fn();
       const queue = createNarrationQueue(stateChangeCallback);
 
-      const mockControls = {
-        pause: jest.fn().mockResolvedValue(undefined),
-        resume: jest.fn().mockResolvedValue(undefined),
-        stop: jest.fn().mockResolvedValue(undefined),
-        seek: jest.fn().mockResolvedValue(undefined),
-      };
-      (playNarration as jest.Mock).mockResolvedValue(mockControls);
-
       queue.enqueue(mockPoi1);
 
-      // Flush microtasks as playNarration resolves asynchronously
+      // Flush microtasks
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
 
       queue.pause();
-      expect(mockControls.pause).toHaveBeenCalled();
+      expect(pauseAudio).toHaveBeenCalled();
       expect(queue.getState().isPaused).toBe(true);
 
       queue.resume();
-      expect(mockControls.resume).toHaveBeenCalled();
+      expect(resumeAudio).toHaveBeenCalled();
       expect(queue.getState().isPaused).toBe(false);
+    });
+
+    it('calls onNarrationStart and onNarrationEnd callbacks', async () => {
+      const stateChangeCallback = jest.fn();
+      const onNarrationStart = jest.fn();
+      const onNarrationEnd = jest.fn();
+      const queue = createNarrationQueue(stateChangeCallback, {
+        onNarrationStart,
+        onNarrationEnd,
+      });
+
+      queue.enqueue(mockPoi1);
+
+      // Flush microtasks
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Verify onNarrationStart was called
+      expect(onNarrationStart).toHaveBeenCalledWith(mockPoi1);
+      expect(onNarrationEnd).not.toHaveBeenCalled();
+
+      // Simulate completion of first narration
+      const statusCallback = (playAudioFile as jest.Mock).mock.calls[0][1];
+      statusCallback('finished');
+
+      // Verify onNarrationEnd was called
+      expect(onNarrationEnd).toHaveBeenCalledWith(mockPoi1);
     });
   });
 });

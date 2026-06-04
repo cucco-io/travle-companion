@@ -1,7 +1,17 @@
 import { POI } from '../../types/poi';
 import { TripLogEntry } from '../../types/trip';
-import { PlaybackStatus, playNarration } from './audioPlayer';
+import {
+  PlaybackStatus,
+  playAudioFile,
+  playTTSFallback,
+  pauseAudio,
+  resumeAudio,
+  stopAudio,
+  seekAudio,
+} from './audioPlayer';
 import * as Speech from 'expo-speech';
+import * as FileSystem from 'expo-file-system/legacy';
+import { CONFIG } from '../../constants/config';
 
 /**
  * State of the narration queue.
@@ -32,13 +42,24 @@ export interface NarrationQueueState {
 export type QueueStateCallback = (state: NarrationQueueState) => void;
 
 /**
+ * Options for the narration queue.
+ */
+export interface NarrationQueueOptions {
+  onNarrationStart?: (poi: POI) => void;
+  onNarrationEnd?: (poi: POI) => void;
+  language?: string;
+}
+
+/**
  * Creates and initializes a narration queue.
  *
  * @param onStateChange - Callback fired whenever the queue state changes
+ * @param options - Additional options including callbacks and language
  * @returns Queue control functions
  */
 export function createNarrationQueue(
-  onStateChange: QueueStateCallback
+  onStateChange: QueueStateCallback,
+  options?: NarrationQueueOptions
 ): {
   enqueue: (poi: POI) => void;
   skip: () => void;
@@ -56,15 +77,13 @@ export function createNarrationQueue(
   let log: TripLogEntry[] = [];
 
   let isPlayingChime = false;
-  let currentControls: {
-    pause: () => Promise<void>;
-    resume: () => Promise<void>;
-    stop: () => Promise<void>;
-    seek: (positionMs: number) => Promise<void>;
-  } | null = null;
+
+  const onNarrationStart = options?.onNarrationStart;
+  const onNarrationEnd = options?.onNarrationEnd;
+  const language = options?.language || 'en';
 
   let cooldownTimeout: NodeJS.Timeout | null = null;
-  const cooldownMs = 120_000; // 2 minutes
+  const cooldownMs = CONFIG.NARRATION.COOLDOWN_MS; // Configurable via configuration file
 
   function getState(): NarrationQueueState {
     return {
@@ -82,30 +101,44 @@ export function createNarrationQueue(
       playbackStatus = 'loading';
       onStateChange(getState());
 
-      currentControls = await playNarration(poi, (status) => {
+      const onStatus = (status: PlaybackStatus) => {
         playbackStatus = status;
         if (status === 'finished') {
           lastPlayedAt = Date.now();
           const entry = createLogEntry(poi, poi.coordinates.lat, poi.coordinates.lng, false);
           log.push(entry);
           currentPOI = null;
-          currentControls = null;
           onStateChange(getState());
+          onNarrationEnd?.(poi);
           playNext();
         } else if (status === 'error') {
           currentPOI = null;
-          currentControls = null;
           onStateChange(getState());
+          onNarrationEnd?.(poi);
           playNext();
         } else {
           onStateChange(getState());
         }
-      });
+      };
+
+      if (poi.audio_file_path) {
+        try {
+          const info = await FileSystem.getInfoAsync(poi.audio_file_path);
+          if (info.exists) {
+            await playAudioFile(poi.audio_file_path, onStatus);
+            return;
+          }
+        } catch (e) {
+          // ignore, fall back
+        }
+      }
+
+      await playTTSFallback(poi.narration_text, language, onStatus);
     } catch (error) {
       playbackStatus = 'error';
       currentPOI = null;
-      currentControls = null;
       onStateChange(getState());
+      onNarrationEnd?.(poi);
       playNext();
     }
   }
@@ -133,8 +166,10 @@ export function createNarrationQueue(
     isPlayingChime = true;
     playbackStatus = 'playing';
     onStateChange(getState());
+    onNarrationStart?.(poi);
 
     Speech.speak(`Coming up next: ${poi.name}`, {
+      language, // Pass the language option to speech.speak for chime
       rate: 1.0,
       pitch: 1.0,
       onStart: () => {
@@ -180,10 +215,7 @@ export function createNarrationQueue(
       Speech.stop().catch(() => {});
     }
 
-    if (currentControls) {
-      currentControls.stop().catch(() => {});
-      currentControls = null;
-    }
+    stopAudio().catch(() => {});
 
     const entry = createLogEntry(poi, poi.coordinates.lat, poi.coordinates.lng, true);
     log.push(entry);
@@ -191,6 +223,7 @@ export function createNarrationQueue(
     currentPOI = null;
     playbackStatus = 'finished';
     onStateChange(getState());
+    onNarrationEnd?.(poi);
 
     // Skip bypasses cooldown to play the next item immediately
     playNext(true);
@@ -204,8 +237,8 @@ export function createNarrationQueue(
       Speech.pause().catch(() => {});
       playbackStatus = 'paused';
       onStateChange(getState());
-    } else if (currentControls) {
-      currentControls.pause().catch(() => {});
+    } else if (currentPOI) {
+      pauseAudio().catch(() => {});
     } else {
       onStateChange(getState());
     }
@@ -219,8 +252,8 @@ export function createNarrationQueue(
       Speech.resume().catch(() => {});
       playbackStatus = 'playing';
       onStateChange(getState());
-    } else if (currentControls) {
-      currentControls.resume().catch(() => {});
+    } else if (currentPOI) {
+      resumeAudio().catch(() => {});
     } else {
       onStateChange(getState());
       playNext();
@@ -233,6 +266,7 @@ export function createNarrationQueue(
     if (isPlayingChime) {
       Speech.stop().catch(() => {});
       Speech.speak(`Coming up next: ${currentPOI.name}`, {
+        language,
         rate: 1.0,
         pitch: 1.0,
         onStart: () => {
@@ -256,9 +290,9 @@ export function createNarrationQueue(
         },
       });
     } else {
-      if (currentControls) {
-        currentControls.seek(0).then(() => {
-          currentControls?.resume().catch(() => {});
+      if (currentPOI) {
+        seekAudio(0).then(() => {
+          resumeAudio().catch(() => {});
         }).catch(() => {
           startNarration(currentPOI!);
         });
@@ -278,14 +312,15 @@ export function createNarrationQueue(
       isPlayingChime = false;
       Speech.stop().catch(() => {});
     }
-    if (currentControls) {
-      currentControls.stop().catch(() => {});
-      currentControls = null;
-    }
+    stopAudio().catch(() => {});
+    const poi = currentPOI;
     currentPOI = null;
     playbackStatus = 'idle';
     isPaused = false;
     onStateChange(getState());
+    if (poi) {
+      onNarrationEnd?.(poi);
+    }
   }
 
   return {
@@ -298,6 +333,7 @@ export function createNarrationQueue(
     getState,
   };
 }
+
 
 /**
  * Checks if the cooldown period has elapsed since the last narration.

@@ -6,6 +6,9 @@ import { POI } from '../../types/poi';
 /**
  * Playback state reported by the audio player.
  */
+/**
+ * Playback state reported by the audio player.
+ */
 export type PlaybackStatus =
   | 'idle'
   | 'loading'
@@ -13,6 +16,11 @@ export type PlaybackStatus =
   | 'paused'
   | 'finished'
   | 'error';
+
+/**
+ * PlaybackState returned by getCurrentPlaybackState.
+ */
+export type PlaybackState = 'playing' | 'paused' | 'stopped' | 'loading';
 
 /**
  * Callback for playback status changes.
@@ -25,7 +33,37 @@ let currentSoundIsPreloaded = false;
 let isSpeechActive = false;
 const preloadedSounds = new Map<string, Audio.Sound>();
 
+// Progress and State tracking
+let currentPlaybackState: PlaybackState = 'stopped';
+let currentPosition = 0;
+let currentDuration = 0;
+let activeOnStatusChange: PlaybackStatusCallback | null = null;
+let activeOnProgress: ((position: number, duration: number) => void) | null = null;
+
+// Speech timing helpers
+let speechInterval: NodeJS.Timeout | null = null;
+let speechStartTime = 0;
+let speechAccumulatedTime = 0;
+let speechEstimatedDuration = 0;
+
+function triggerStatusChange(status: PlaybackStatus) {
+  if (status === 'loading') {
+    currentPlaybackState = 'loading';
+  } else if (status === 'playing') {
+    currentPlaybackState = 'playing';
+  } else if (status === 'paused') {
+    currentPlaybackState = 'paused';
+  } else {
+    currentPlaybackState = 'stopped';
+  }
+  activeOnStatusChange?.(status);
+}
+
 async function stopCurrentAudio(): Promise<void> {
+  if (speechInterval) {
+    clearInterval(speechInterval);
+    speechInterval = null;
+  }
   if (currentSound) {
     try {
       await currentSound.stopAsync();
@@ -49,143 +87,230 @@ async function stopCurrentAudio(): Promise<void> {
     }
     isSpeechActive = false;
   }
+  currentPosition = 0;
+  currentDuration = 0;
 }
 
 /**
- * Plays the narration audio for a POI.
- *
- * @param poi - The POI whose narration to play
- * @param onStatusChange - Callback for playback status updates
- * @returns Control object with pause, resume, stop, and seek functions
+ * Returns the current playback state ('playing', 'paused', 'stopped', 'loading').
  */
-export async function playNarration(
-  poi: POI,
-  onStatusChange?: PlaybackStatusCallback
-): Promise<{
-  pause: () => Promise<void>;
-  resume: () => Promise<void>;
-  stop: () => Promise<void>;
-  seek: (positionMs: number) => Promise<void>;
-}> {
+export function getCurrentPlaybackState(): PlaybackState {
+  return currentPlaybackState;
+}
+
+/**
+ * Plays a local .mp3 file.
+ *
+ * @param filePath - Local path to the .mp3 file
+ * @param onStatusChange - Callback for playback status updates
+ * @param onProgress - Callback for position/duration updates (in ms)
+ */
+export async function playAudioFile(
+  filePath: string,
+  onStatusChange?: PlaybackStatusCallback,
+  onProgress?: (position: number, duration: number) => void
+): Promise<void> {
   await stopCurrentAudio();
 
-  let useSpeech = true;
+  activeOnStatusChange = onStatusChange || null;
+  activeOnProgress = onProgress || null;
+  currentPlaybackState = 'loading';
+  triggerStatusChange('loading');
 
   const onPlaybackStatusUpdate = (status: any) => {
     if (!status.isLoaded) {
       if (status.error) {
-        onStatusChange?.('error');
+        currentPosition = 0;
+        currentDuration = 0;
+        triggerStatusChange('error');
       }
       return;
     }
 
+    currentPosition = status.positionMillis || 0;
+    currentDuration = status.durationMillis || 0;
+    activeOnProgress?.(currentPosition, currentDuration);
+
     if (status.didJustFinish) {
-      onStatusChange?.('finished');
+      currentPosition = 0;
+      triggerStatusChange('finished');
       if (currentSound && !currentSoundIsPreloaded) {
         currentSound.unloadAsync().catch(() => {});
         currentSound = null;
       }
     } else if (status.isPlaying) {
-      onStatusChange?.('playing');
+      triggerStatusChange('playing');
     } else {
-      onStatusChange?.('paused');
+      triggerStatusChange('paused');
     }
   };
 
-  if (poi.audio_file_path) {
-    try {
-      onStatusChange?.('loading');
-      const info = await FileSystem.getInfoAsync(poi.audio_file_path);
-      if (info.exists) {
-        let sound: Audio.Sound;
-        if (preloadedSounds.has(poi.audio_file_path)) {
-          sound = preloadedSounds.get(poi.audio_file_path)!;
-          currentSoundIsPreloaded = true;
-          sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
-          await sound.setPositionAsync(0);
-          await sound.playAsync();
-        } else {
-          currentSoundIsPreloaded = false;
-          const result = await Audio.Sound.createAsync(
-            { uri: poi.audio_file_path },
-            { shouldPlay: true },
-            onPlaybackStatusUpdate
-          );
-          sound = result.sound;
-        }
-        currentSound = sound;
-        useSpeech = false;
-      }
-    } catch (error) {
-      // If loading fails, we will fall back to speech
-      onStatusChange?.('error');
+  try {
+    const info = await FileSystem.getInfoAsync(filePath);
+    if (!info.exists) {
+      throw new Error(`File does not exist: ${filePath}`);
     }
-  }
 
-  if (useSpeech) {
-    try {
-      onStatusChange?.('loading');
-      isSpeechActive = true;
-      Speech.speak(poi.narration_text, {
-        rate: 1.0,
-        pitch: 1.0,
-        onStart: () => {
-          onStatusChange?.('playing');
-        },
-        onDone: () => {
-          isSpeechActive = false;
-          onStatusChange?.('finished');
-        },
-        onStopped: () => {
-          isSpeechActive = false;
-          onStatusChange?.('paused');
-        },
-        onError: () => {
-          isSpeechActive = false;
-          onStatusChange?.('error');
-        },
-      });
-    } catch (error) {
-      isSpeechActive = false;
-      onStatusChange?.('error');
+    if (preloadedSounds.has(filePath)) {
+      const sound = preloadedSounds.get(filePath)!;
+      currentSound = sound;
+      currentSoundIsPreloaded = true;
+      sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+      await sound.setPositionAsync(0);
+      await sound.playAsync();
+    } else {
+      currentSoundIsPreloaded = false;
+      const result = await Audio.Sound.createAsync(
+        { uri: filePath },
+        { shouldPlay: true },
+        onPlaybackStatusUpdate
+      );
+      currentSound = result.sound;
     }
+  } catch (error) {
+    currentPosition = 0;
+    currentDuration = 0;
+    triggerStatusChange('error');
+    throw error;
   }
+}
 
-  return {
-    pause: async () => {
-      if (currentSound) {
-        await currentSound.pauseAsync();
-      } else if (isSpeechActive) {
-        try {
-          await Speech.pause();
-        } catch (e) {
-          // Fallback if pause is not supported on platform
-        }
-        onStatusChange?.('paused');
-      }
-    },
-    resume: async () => {
-      if (currentSound) {
-        await currentSound.playAsync();
-      } else if (isSpeechActive) {
-        try {
-          await Speech.resume();
-        } catch (e) {
-          // Fallback if resume is not supported on platform
-        }
-        onStatusChange?.('playing');
-      }
-    },
-    stop: async () => {
-      await stopCurrentAudio();
-      onStatusChange?.('finished');
-    },
-    seek: async (positionMs: number) => {
-      if (currentSound) {
-        await currentSound.setPositionAsync(positionMs);
-      }
-    },
+/**
+ * Fallback speech synthesis using device TTS.
+ *
+ * @param text - The narration text to speak
+ * @param language - BCP 47 language code
+ * @param onStatusChange - Callback for playback status updates
+ * @param onProgress - Callback for position/duration updates (in ms)
+ */
+export async function playTTSFallback(
+  text: string,
+  language: string,
+  onStatusChange?: PlaybackStatusCallback,
+  onProgress?: (position: number, duration: number) => void
+): Promise<void> {
+  await stopCurrentAudio();
+
+  activeOnStatusChange = onStatusChange || null;
+  activeOnProgress = onProgress || null;
+  currentPlaybackState = 'loading';
+  currentPosition = 0;
+  currentDuration = 0;
+  triggerStatusChange('loading');
+
+  isSpeechActive = true;
+
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+  // Estimate duration: assume average speed of 150 words per minute (2.5 words per second)
+  const estimatedDurationMs = Math.max(1000, (wordCount / 150) * 60 * 1000);
+  currentDuration = estimatedDurationMs;
+  speechEstimatedDuration = estimatedDurationMs;
+  speechAccumulatedTime = 0;
+  speechStartTime = Date.now();
+
+  const startProgressInterval = () => {
+    if (speechInterval) clearInterval(speechInterval);
+    speechStartTime = Date.now();
+    speechInterval = setInterval(() => {
+      if (!isSpeechActive || currentPlaybackState !== 'playing') return;
+      const elapsed = Date.now() - speechStartTime + speechAccumulatedTime;
+      currentPosition = Math.min(elapsed, speechEstimatedDuration);
+      activeOnProgress?.(currentPosition, currentDuration);
+    }, 500);
   };
+
+  const stopProgressInterval = () => {
+    if (speechInterval) {
+      clearInterval(speechInterval);
+      speechInterval = null;
+    }
+  };
+
+  try {
+    Speech.speak(text, {
+      language, // Pass language parameter/option to Speech.speak
+      rate: 1.0,
+      pitch: 1.0,
+      onStart: () => {
+        triggerStatusChange('playing');
+        startProgressInterval();
+      },
+      onDone: () => {
+        isSpeechActive = false;
+        stopProgressInterval();
+        currentPosition = speechEstimatedDuration;
+        activeOnProgress?.(currentPosition, currentDuration);
+        triggerStatusChange('finished');
+      },
+      onStopped: () => {
+        isSpeechActive = false;
+        stopProgressInterval();
+        triggerStatusChange('paused');
+      },
+      onError: () => {
+        isSpeechActive = false;
+        stopProgressInterval();
+        triggerStatusChange('error');
+      },
+    });
+  } catch (error) {
+    isSpeechActive = false;
+    stopProgressInterval();
+    triggerStatusChange('error');
+    throw error;
+  }
+}
+
+/**
+ * Pauses the current narration audio or speech.
+ */
+export async function pauseAudio(): Promise<void> {
+  if (currentSound) {
+    await currentSound.pauseAsync();
+  } else if (isSpeechActive) {
+    try {
+      await Speech.pause();
+    } catch (e) {
+      // ignore
+    }
+    speechAccumulatedTime += Date.now() - speechStartTime;
+    triggerStatusChange('paused');
+  }
+}
+
+/**
+ * Resumes the current narration audio or speech.
+ */
+export async function resumeAudio(): Promise<void> {
+  if (currentSound) {
+    await currentSound.playAsync();
+  } else if (isSpeechActive) {
+    try {
+      await Speech.resume();
+    } catch (e) {
+      // ignore
+    }
+    speechStartTime = Date.now();
+    triggerStatusChange('playing');
+  }
+}
+
+/**
+ * Stops the current narration audio or speech.
+ */
+export async function stopAudio(): Promise<void> {
+  await stopCurrentAudio();
+  triggerStatusChange('finished');
+}
+
+/**
+ * Seeks to a specific position in ms (only for audio files).
+ */
+export async function seekAudio(positionMs: number): Promise<void> {
+  if (currentSound) {
+    await currentSound.setPositionAsync(positionMs);
+  }
 }
 
 /**

@@ -2,7 +2,13 @@ import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
-  playNarration,
+  playAudioFile,
+  playTTSFallback,
+  getCurrentPlaybackState,
+  pauseAudio,
+  resumeAudio,
+  stopAudio,
+  seekAudio,
   configureAudioSession,
   preloadAudio,
   releaseAudioResources,
@@ -112,10 +118,12 @@ describe('audioPlayer', () => {
     });
   });
 
-  describe('playNarration', () => {
-    it('plays local file when path is present and exists', async () => {
+  describe('playAudioFile', () => {
+    it('plays local file when it exists', async () => {
       const statusCallback = jest.fn();
-      const controls = await playNarration(mockPoi, statusCallback);
+      const progressCallback = jest.fn();
+      
+      await playAudioFile('/path/to/eiffel.mp3', statusCallback, progressCallback);
 
       expect(FileSystem.getInfoAsync).toHaveBeenCalledWith('/path/to/eiffel.mp3');
       expect(Audio.Sound.createAsync).toHaveBeenCalledWith(
@@ -123,49 +131,53 @@ describe('audioPlayer', () => {
         { shouldPlay: true },
         expect.any(Function)
       );
-      expect(Speech.speak).not.toHaveBeenCalled();
-      expect(controls).toHaveProperty('pause');
-      expect(controls).toHaveProperty('resume');
-      expect(controls).toHaveProperty('stop');
-      expect(controls).toHaveProperty('seek');
+      expect(getCurrentPlaybackState()).toBe('loading');
     });
 
-    it('falls back to Speech when audio_file_path is missing', async () => {
-      const statusCallback = jest.fn();
-      const poiNoAudio = { ...mockPoi, audio_file_path: null };
-
-      await playNarration(poiNoAudio, statusCallback);
-
-      expect(Audio.Sound.createAsync).not.toHaveBeenCalled();
-      expect(Speech.speak).toHaveBeenCalledWith(
-        poiNoAudio.narration_text,
-        expect.any(Object)
-      );
-    });
-
-    it('falls back to Speech when file does not exist', async () => {
+    it('throws error when file does not exist', async () => {
       (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({ exists: false });
-      const statusCallback = jest.fn();
-
-      await playNarration(mockPoi, statusCallback);
-
-      expect(Audio.Sound.createAsync).not.toHaveBeenCalled();
-      expect(Speech.speak).toHaveBeenCalledWith(
-        mockPoi.narration_text,
-        expect.any(Object)
-      );
+      
+      await expect(playAudioFile('/path/to/missing.mp3')).rejects.toThrow();
+      expect(getCurrentPlaybackState()).toBe('stopped');
     });
+  });
 
-    it('falls back to Speech when loading audio fails', async () => {
-      (Audio.Sound.createAsync as jest.Mock).mockRejectedValue(new Error('Load error'));
+  describe('playTTSFallback', () => {
+    it('synthesizes speech and passes the language parameter', async () => {
       const statusCallback = jest.fn();
-
-      await playNarration(mockPoi, statusCallback);
+      const progressCallback = jest.fn();
+      
+      await playTTSFallback('Hello World', 'it', statusCallback, progressCallback);
 
       expect(Speech.speak).toHaveBeenCalledWith(
-        mockPoi.narration_text,
-        expect.any(Object)
+        'Hello World',
+        expect.objectContaining({
+          language: 'it',
+          rate: 1.0,
+          pitch: 1.0,
+        })
       );
+      expect(getCurrentPlaybackState()).toBe('loading');
+    });
+  });
+
+  describe('playback controls', () => {
+    it('pauses, resumes, stops, and seeks audio', async () => {
+      // Play a file to initialize currentSound
+      await playAudioFile('/path/to/eiffel.mp3');
+      
+      await pauseAudio();
+      expect(mockSound.pauseAsync).toHaveBeenCalled();
+
+      await resumeAudio();
+      expect(mockSound.playAsync).toHaveBeenCalled();
+
+      await seekAudio(1000);
+      expect(mockSound.setPositionAsync).toHaveBeenCalledWith(1000);
+
+      await stopAudio();
+      expect(mockSound.stopAsync).toHaveBeenCalled();
+      expect(getCurrentPlaybackState()).toBe('stopped');
     });
   });
 });
