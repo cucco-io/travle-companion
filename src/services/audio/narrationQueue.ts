@@ -1,21 +1,7 @@
-/**
- * src/services/audio/narrationQueue.ts
- *
- * Narration queue manager with cooldown and skip functionality.
- * Manages the ordered queue of POI narrations during an active trip.
- * Ensures narrations play in the right order, with proper spacing,
- * and handles user actions like skip and replay.
- *
- * Dependencies:
- * - src/services/audio/audioPlayer.ts (playNarration)
- * - src/types/poi.ts (POI)
- * - src/types/trip.ts (TripLogEntry)
- * - src/constants/config.ts (NARRATION.COOLDOWN_MS)
- */
-
 import { POI } from '../../types/poi';
 import { TripLogEntry } from '../../types/trip';
-import { PlaybackStatus } from './audioPlayer';
+import { PlaybackStatus, playNarration } from './audioPlayer';
+import * as Speech from 'expo-speech';
 
 /**
  * State of the narration queue.
@@ -50,15 +36,6 @@ export type QueueStateCallback = (state: NarrationQueueState) => void;
  *
  * @param onStateChange - Callback fired whenever the queue state changes
  * @returns Queue control functions
- *
- * Implementation notes:
- * - The queue receives POIs from the proximity engine via `enqueue()`
- * - Only one narration plays at a time
- * - After a narration finishes, check the cooldown before auto-playing the next
- * - If cooldown hasn't elapsed, wait until it has
- * - User can skip the current narration (stops playback, moves to next)
- * - User can pause/resume the current narration
- * - All play/skip events are logged as TripLogEntry records
  */
 export function createNarrationQueue(
   onStateChange: QueueStateCallback
@@ -71,14 +48,255 @@ export function createNarrationQueue(
   stop: () => void;
   getState: () => NarrationQueueState;
 } {
-  // TODO: Implement narration queue
-  // 1. Initialize state with empty queue, null currentPOI, idle status
-  // 2. Implement enqueue: add POI to queue, auto-play if idle and cooldown elapsed
-  // 3. Implement skip: stop current playback, log as skipped, advance queue
-  // 4. Implement pause/resume: delegate to audioPlayer
-  // 5. Implement replay: restart current narration from the beginning
-  // 6. Implement stop: clear queue, stop playback, clean up
-  throw new Error('Not implemented');
+  let currentPOI: POI | null = null;
+  let playbackStatus: PlaybackStatus = 'idle';
+  let queue: POI[] = [];
+  let lastPlayedAt: number = 0;
+  let isPaused: boolean = false;
+  let log: TripLogEntry[] = [];
+
+  let isPlayingChime = false;
+  let currentControls: {
+    pause: () => Promise<void>;
+    resume: () => Promise<void>;
+    stop: () => Promise<void>;
+    seek: (positionMs: number) => Promise<void>;
+  } | null = null;
+
+  let cooldownTimeout: NodeJS.Timeout | null = null;
+  const cooldownMs = 120_000; // 2 minutes
+
+  function getState(): NarrationQueueState {
+    return {
+      currentPOI,
+      playbackStatus,
+      queue: [...queue],
+      lastPlayedAt,
+      isPaused,
+      log: [...log],
+    };
+  }
+
+  async function startNarration(poi: POI) {
+    try {
+      playbackStatus = 'loading';
+      onStateChange(getState());
+
+      currentControls = await playNarration(poi, (status) => {
+        playbackStatus = status;
+        if (status === 'finished') {
+          lastPlayedAt = Date.now();
+          const entry = createLogEntry(poi, poi.coordinates.lat, poi.coordinates.lng, false);
+          log.push(entry);
+          currentPOI = null;
+          currentControls = null;
+          onStateChange(getState());
+          playNext();
+        } else if (status === 'error') {
+          currentPOI = null;
+          currentControls = null;
+          onStateChange(getState());
+          playNext();
+        } else {
+          onStateChange(getState());
+        }
+      });
+    } catch (error) {
+      playbackStatus = 'error';
+      currentPOI = null;
+      currentControls = null;
+      onStateChange(getState());
+      playNext();
+    }
+  }
+
+  function playNext(bypassCooldown = false) {
+    if (isPaused) return;
+    if (currentPOI !== null) return;
+    if (queue.length === 0) return;
+
+    const now = Date.now();
+    const timeSinceLast = now - lastPlayedAt;
+
+    if (!bypassCooldown && timeSinceLast < cooldownMs) {
+      if (cooldownTimeout) {
+        clearTimeout(cooldownTimeout);
+      }
+      cooldownTimeout = setTimeout(() => {
+        playNext();
+      }, cooldownMs - timeSinceLast);
+      return;
+    }
+
+    const poi = queue.shift()!;
+    currentPOI = poi;
+    isPlayingChime = true;
+    playbackStatus = 'playing';
+    onStateChange(getState());
+
+    Speech.speak(`Coming up next: ${poi.name}`, {
+      rate: 1.0,
+      pitch: 1.0,
+      onStart: () => {
+        playbackStatus = 'playing';
+        onStateChange(getState());
+      },
+      onDone: () => {
+        if (!isPlayingChime) return;
+        isPlayingChime = false;
+        startNarration(poi);
+      },
+      onStopped: () => {
+        if (!isPlayingChime) return;
+        isPlayingChime = false;
+        startNarration(poi);
+      },
+      onError: () => {
+        if (!isPlayingChime) return;
+        isPlayingChime = false;
+        startNarration(poi);
+      },
+    });
+  }
+
+  function enqueue(poi: POI) {
+    if (currentPOI?.id === poi.id || queue.some((p) => p.id === poi.id)) {
+      return;
+    }
+    queue.push(poi);
+    onStateChange(getState());
+
+    if (currentPOI === null) {
+      playNext();
+    }
+  }
+
+  function skip() {
+    if (currentPOI === null) return;
+
+    const poi = currentPOI;
+    if (isPlayingChime) {
+      isPlayingChime = false;
+      Speech.stop().catch(() => {});
+    }
+
+    if (currentControls) {
+      currentControls.stop().catch(() => {});
+      currentControls = null;
+    }
+
+    const entry = createLogEntry(poi, poi.coordinates.lat, poi.coordinates.lng, true);
+    log.push(entry);
+
+    currentPOI = null;
+    playbackStatus = 'finished';
+    onStateChange(getState());
+
+    // Skip bypasses cooldown to play the next item immediately
+    playNext(true);
+  }
+
+  function pause() {
+    if (isPaused) return;
+    isPaused = true;
+
+    if (isPlayingChime) {
+      Speech.pause().catch(() => {});
+      playbackStatus = 'paused';
+      onStateChange(getState());
+    } else if (currentControls) {
+      currentControls.pause().catch(() => {});
+    } else {
+      onStateChange(getState());
+    }
+  }
+
+  function resume() {
+    if (!isPaused) return;
+    isPaused = false;
+
+    if (isPlayingChime) {
+      Speech.resume().catch(() => {});
+      playbackStatus = 'playing';
+      onStateChange(getState());
+    } else if (currentControls) {
+      currentControls.resume().catch(() => {});
+    } else {
+      onStateChange(getState());
+      playNext();
+    }
+  }
+
+  function replay() {
+    if (currentPOI === null) return;
+
+    if (isPlayingChime) {
+      Speech.stop().catch(() => {});
+      Speech.speak(`Coming up next: ${currentPOI.name}`, {
+        rate: 1.0,
+        pitch: 1.0,
+        onStart: () => {
+          playbackStatus = 'playing';
+          onStateChange(getState());
+        },
+        onDone: () => {
+          if (!isPlayingChime) return;
+          isPlayingChime = false;
+          startNarration(currentPOI!);
+        },
+        onStopped: () => {
+          if (!isPlayingChime) return;
+          isPlayingChime = false;
+          startNarration(currentPOI!);
+        },
+        onError: () => {
+          if (!isPlayingChime) return;
+          isPlayingChime = false;
+          startNarration(currentPOI!);
+        },
+      });
+    } else {
+      if (currentControls) {
+        currentControls.seek(0).then(() => {
+          currentControls?.resume().catch(() => {});
+        }).catch(() => {
+          startNarration(currentPOI!);
+        });
+      } else {
+        startNarration(currentPOI);
+      }
+    }
+  }
+
+  function stop() {
+    if (cooldownTimeout) {
+      clearTimeout(cooldownTimeout);
+      cooldownTimeout = null;
+    }
+    queue = [];
+    if (isPlayingChime) {
+      isPlayingChime = false;
+      Speech.stop().catch(() => {});
+    }
+    if (currentControls) {
+      currentControls.stop().catch(() => {});
+      currentControls = null;
+    }
+    currentPOI = null;
+    playbackStatus = 'idle';
+    isPaused = false;
+    onStateChange(getState());
+  }
+
+  return {
+    enqueue,
+    skip,
+    pause,
+    resume,
+    replay,
+    stop,
+    getState,
+  };
 }
 
 /**
@@ -92,9 +310,7 @@ export function isCooldownElapsed(
   lastPlayedAt: number,
   cooldownMs: number
 ): boolean {
-  // TODO: Implement cooldown check
-  // return Date.now() - lastPlayedAt >= cooldownMs
-  throw new Error('Not implemented');
+  return Date.now() - lastPlayedAt >= cooldownMs;
 }
 
 /**
@@ -112,6 +328,13 @@ export function createLogEntry(
   lng: number,
   skipped: boolean
 ): TripLogEntry {
-  // TODO: Implement log entry creation
-  throw new Error('Not implemented');
+  return {
+    poi_id: poi.id,
+    played_at: new Date().toISOString(),
+    location: {
+      lat,
+      lng,
+    },
+    skipped,
+  };
 }
