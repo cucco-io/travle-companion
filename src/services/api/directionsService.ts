@@ -46,12 +46,29 @@ export async function fetchDirections(
   destLat: number,
   destLng: number
 ): Promise<DirectionsRoute> {
-  // TODO: Implement Google Directions API integration
-  // 1. Construct request URL: https://maps.googleapis.com/maps/api/directions/json?...
-  // 2. Pass origin, destination as "lat,lng" strings
-  // 3. Parse response, check status === 'OK'
-  // 4. Return the first route object (routes[0])
-  throw new Error('Not implemented');
+  const apiKey = process.env.GOOGLE_DIRECTIONS_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google Directions API key is missing');
+  }
+
+  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originLat},${originLng}&destination=${destLat},${destLng}&mode=driving&alternatives=false&key=${apiKey}`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  const data = (await response.json()) as DirectionsResponse;
+  
+  if (data.status !== 'OK') {
+    throw new Error(`Directions API error: ${data.status}`);
+  }
+
+  if (!data.routes || data.routes.length === 0) {
+    throw new Error('Directions API returned OK status but no routes found');
+  }
+
+  return data.routes[0];
 }
 
 /**
@@ -66,8 +83,10 @@ export async function fetchDirections(
  * // polyline is something like "e~lgFczysO..."
  */
 export function extractPolyline(route: DirectionsRoute): string {
-  // TODO: Extract overview_polyline.points from the route object
-  throw new Error('Not implemented');
+  if (!route.overview_polyline || !route.overview_polyline.points) {
+    throw new Error('Invalid route: missing overview polyline points');
+  }
+  return route.overview_polyline.points;
 }
 
 /**
@@ -83,6 +102,17 @@ export function extractPolyline(route: DirectionsRoute): string {
 export function extractRouteMetrics(
   route: DirectionsRoute
 ): { distanceMeters: number; durationSeconds: number } {
-  // TODO: Sum distance and duration across all legs
-  throw new Error('Not implemented');
+  if (!route.legs || route.legs.length === 0) {
+    return { distanceMeters: 0, durationSeconds: 0 };
+  }
+
+  let distanceMeters = 0;
+  let durationSeconds = 0;
+
+  for (const leg of route.legs) {
+    distanceMeters += leg.distance?.value || 0;
+    durationSeconds += leg.duration?.value || 0;
+  }
+
+  return { distanceMeters, durationSeconds };
 }
