@@ -15,66 +15,158 @@
  * - ElevenLabs: https://elevenlabs.io/docs/api-reference
  */
 
-import { TTSRequest, TTSResponse } from '../../types/api';
+import { POI } from '../../types/poi';
+import { saveAudioFile, saveImageFile, saveBase64File } from '../storage/fileStorage';
+
+declare const Buffer: any;
+
+/**
+ * Helper function to convert ArrayBuffer to Base64 string.
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(buffer).toString('base64');
+  }
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Helper function to convert Base64 string to ArrayBuffer.
+ */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  if (typeof Buffer !== 'undefined') {
+    const buf = Buffer.from(base64, 'base64');
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  }
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+/**
+ * Returns the default voice ID/name for a given language and provider.
+ *
+ * @param languageCode - BCP 47 language code (e.g., 'en-US', 'it-IT', 'fr-FR')
+ * @param provider - TTS provider ('google' or 'elevenlabs')
+ * @returns A voice ID or name string appropriate for the provider
+ */
+export function getDefaultVoice(
+  languageCode: string,
+  provider: 'google' | 'elevenlabs'
+): string {
+  if (provider === 'google') {
+    const code = languageCode.toLowerCase();
+    if (code.startsWith('en')) return 'en-US-Neural2-F';
+    if (code.startsWith('it')) return 'it-IT-Neural2-C';
+    if (code.startsWith('fr')) return 'fr-FR-Neural2-B';
+    if (code.startsWith('es')) return 'es-ES-Neural2-F';
+    if (code.startsWith('de')) return 'de-DE-Neural2-F';
+
+    if (languageCode.includes('-')) {
+      return `${languageCode}-Wavenet-A`;
+    }
+    return `${languageCode}-${languageCode.toUpperCase()}-Wavenet-A`;
+  } else {
+    return process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+  }
+}
 
 /**
  * Synthesizes speech from text using the configured TTS provider.
  *
  * @param text - The narration text to convert to speech
- * @param languageCode - BCP 47 language code (e.g., 'en-US', 'it-IT', 'fr-FR')
- * @param options - Optional configuration
- * @param options.voice - Specific voice ID (provider-dependent)
- * @param options.speakingRate - Speech speed multiplier (0.5–2.0, default 1.0)
- * @returns Base64-encoded audio content string
- *
- * Implementation notes:
- * - Check TTS_PROVIDER env var to determine which API to call
- * - For Google Cloud TTS:
- *   - Endpoint: https://texttospeech.googleapis.com/v1/text:synthesize
- *   - Use Neural2 or WaveNet voices for quality
- *   - audioEncoding: 'MP3'
- *   - SSML support: wrap text in <speak> tags for better prosody
- * - For ElevenLabs:
- *   - Endpoint: https://api.elevenlabs.io/v1/text-to-speech/{voice_id}
- *   - Select appropriate voice from the library
- *   - Returns audio directly (not base64)
- * - Handle long texts by splitting at sentence boundaries if needed
- *   (Google Cloud TTS has a ~5000 char limit per request)
+ * @param language - BCP 47 language code (e.g., 'en-US', 'it-IT', 'fr-FR')
+ * @returns Raw audio binary as ArrayBuffer
  *
  * @throws Error if API key is missing, provider is invalid, or synthesis fails
  */
 export async function synthesizeSpeech(
   text: string,
-  languageCode: string,
-  options?: {
-    voice?: string;
-    speakingRate?: number;
+  language: string
+): Promise<ArrayBuffer> {
+  const provider = process.env.TTS_PROVIDER || 'google';
+
+  if (provider === 'google') {
+    const apiKey = process.env.GOOGLE_TTS_API_KEY || process.env.TTS_API_KEY;
+    if (!apiKey) {
+      throw new Error('Google Cloud TTS API key is not configured.');
+    }
+    const voiceName = getDefaultVoice(language, 'google');
+    const endpoint = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: { text },
+        voice: {
+          languageCode: language,
+          name: voiceName,
+        },
+        audioConfig: {
+          audioEncoding: 'MP3',
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Google Cloud TTS API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const data = (await response.json()) as { audioContent: string };
+    if (!data.audioContent) {
+      throw new Error('Google Cloud TTS API returned empty audio content.');
+    }
+
+    return base64ToArrayBuffer(data.audioContent);
+  } else if (provider === 'elevenlabs') {
+    const apiKey = process.env.ELEVENLABS_API_KEY || process.env.TTS_API_KEY;
+    if (!apiKey) {
+      throw new Error('ElevenLabs API key is not configured.');
+    }
+    const voiceId = process.env.ELEVENLABS_VOICE_ID;
+    if (!voiceId) {
+      throw new Error('ElevenLabs voice ID is not configured (ELEVENLABS_VOICE_ID).');
+    }
+    const endpoint = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'xi-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_multilingual_v2',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`ElevenLabs API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    return await response.arrayBuffer();
+  } else {
+    throw new Error(`Unsupported TTS provider: ${provider}`);
   }
-): Promise<string> {
-  // TODO: Implement TTS synthesis
-  // 1. Determine provider from environment
-  // 2. Call the appropriate API
-  // 3. Return base64-encoded audio content
-  throw new Error('Not implemented');
 }
 
 /**
  * Synthesizes speech and saves it as an .mp3 file to local storage.
- *
- * This is the primary function used by the preparation pipeline.
- * It synthesizes the text, decodes the base64 audio, and writes it to disk.
- *
- * @param text - The narration text to convert
- * @param languageCode - BCP 47 language code
- * @param outputPath - Absolute local file path to save the .mp3 file
- * @param options - Optional TTS configuration
- * @returns Object with the file path and estimated duration in seconds
- *
- * Implementation notes:
- * - Use expo-file-system to write the file
- * - Estimate duration from word count (~150 words/min) or audio metadata
- * - Create parent directories if they don't exist
- * - Verify file was written successfully (check file size > 0)
  */
 export async function synthesizeAndSave(
   text: string,
@@ -85,52 +177,152 @@ export async function synthesizeAndSave(
     speakingRate?: number;
   }
 ): Promise<{ filePath: string; estimatedDurationSeconds: number }> {
-  // TODO: Implement synthesis + file save
-  // 1. Call synthesizeSpeech()
-  // 2. Decode base64 to binary
-  // 3. Write to outputPath using expo-file-system
-  // 4. Calculate estimated duration
-  // 5. Return file path and duration
-  throw new Error('Not implemented');
-}
+  const audioBuffer = await synthesizeSpeech(text, languageCode);
+  const base64 = arrayBufferToBase64(audioBuffer);
+  await saveBase64File(base64, outputPath);
 
-/**
- * Returns the default voice ID for a given language and provider.
- *
- * @param languageCode - BCP 47 language code (e.g., 'en', 'it', 'fr')
- * @param provider - TTS provider ('google' or 'elevenlabs')
- * @returns A voice ID string appropriate for the provider
- *
- * Implementation notes:
- * - Maintain a mapping of language → preferred voice for each provider
- * - For Google: prefer Neural2 voices (e.g., 'en-US-Neural2-D')
- * - For ElevenLabs: use pre-selected voice IDs from the library
- * - Fallback to a sensible default if language is not mapped
- */
-export function getDefaultVoice(
-  languageCode: string,
-  provider: 'google' | 'elevenlabs'
-): string {
-  // TODO: Implement voice selection mapping
-  throw new Error('Not implemented');
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  const estimatedDurationSeconds = Math.max(1, Math.round((wordCount / 150) * 60));
+
+  return {
+    filePath: outputPath,
+    estimatedDurationSeconds,
+  };
 }
 
 /**
  * Splits long text into chunks that fit within the TTS provider's character limit.
- *
- * @param text - The full narration text
- * @param maxChars - Maximum characters per chunk (default: 4800 for Google, 5000 for ElevenLabs)
- * @returns Array of text chunks, split at sentence boundaries
- *
- * Implementation notes:
- * - Split at sentence boundaries ('. ', '! ', '? ') to avoid mid-sentence cuts
- * - Ensure no chunk exceeds maxChars
- * - Preserve paragraph breaks where possible
  */
 export function splitTextForTTS(
   text: string,
-  maxChars?: number
+  maxChars: number = 4800
 ): string[] {
-  // TODO: Implement smart text splitting
-  throw new Error('Not implemented');
+  if (text.length <= maxChars) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let currentChunk = '';
+  const sentences = text.split(/(?<=[.!?])\s+/);
+
+  for (const sentence of sentences) {
+    if ((currentChunk + sentence).length > maxChars) {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+      }
+      currentChunk = sentence;
+    } else {
+      currentChunk = currentChunk ? `${currentChunk} ${sentence}` : sentence;
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+
+  return chunks;
+}
+
+/**
+ * Generates audio files for all POIs and saves them locally.
+ *
+ * @param pois - Array of Points of Interest
+ * @param tripId - The trip's unique ID
+ * @param language - BCP 47 language code
+ * @param onProgress - Optional callback for progress updates
+ * @returns Array of POIs with updated audio_file_path
+ */
+export async function generateAllAudio(
+  pois: POI[],
+  tripId: string,
+  language: string,
+  onProgress?: (completed: number, total: number) => void
+): Promise<POI[]> {
+  const total = pois.length;
+  let completed = 0;
+
+  for (const poi of pois) {
+    if (poi.narration_text) {
+      try {
+        const audioBuffer = await synthesizeSpeech(poi.narration_text, language);
+        const filePath = await saveAudioFile(tripId, poi.id, audioBuffer);
+        poi.audio_file_path = filePath;
+      } catch (error) {
+        console.error(`Failed to generate audio for POI ${poi.id}:`, error);
+        throw error;
+      }
+    }
+    completed++;
+    if (onProgress) {
+      onProgress(completed, total);
+    }
+  }
+
+  return pois;
+}
+
+/**
+ * Downloads a single POI image and saves it locally.
+ *
+ * @param poi - Point of Interest
+ * @param tripId - The trip's unique ID
+ * @returns Path to the saved image file, or null on failure/missing URL
+ */
+export async function downloadPOIImage(
+  poi: POI,
+  tripId: string
+): Promise<string | null> {
+  if (!poi.image_url) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(poi.image_url);
+    if (!response.ok) {
+      throw new Error(`Failed to download image from ${poi.image_url}: ${response.status} ${response.statusText}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const localPath = await saveImageFile(tripId, poi.id, arrayBuffer);
+    return localPath;
+  } catch (error) {
+    console.error(`Error downloading image for POI ${poi.id}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Downloads images for all POIs and saves them locally.
+ *
+ * @param pois - Array of Points of Interest
+ * @param tripId - The trip's unique ID
+ * @param onProgress - Optional callback for progress updates
+ * @returns Array of POIs with updated image_local_path
+ */
+export async function downloadAllImages(
+  pois: POI[],
+  tripId: string,
+  onProgress?: (completed: number, total: number) => void
+): Promise<POI[]> {
+  const total = pois.length;
+  let completed = 0;
+
+  for (const poi of pois) {
+    if (poi.image_url) {
+      try {
+        const localPath = await downloadPOIImage(poi, tripId);
+        poi.image_local_path = localPath;
+      } catch (error) {
+        console.error(`Failed to download image for POI ${poi.id}:`, error);
+        poi.image_local_path = null;
+      }
+    } else {
+      poi.image_local_path = null;
+    }
+    completed++;
+    if (onProgress) {
+      onProgress(completed, total);
+    }
+  }
+
+  return pois;
 }
