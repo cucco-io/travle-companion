@@ -74,7 +74,7 @@ export function initProximityEngine(
   stop: () => void;
   getState: () => ProximityEngineState;
 } {
-  const sortedPOIs = [...pois].sort((a, b) => b.priority - a.priority);
+  const sortedPOIs = [...pois];
 
   const state: ProximityEngineState = {
     remainingPOIs: sortedPOIs,
@@ -150,40 +150,29 @@ export function checkProximity(
     (poi) => !state.playedPOIIds.has(poi.id)
   );
 
-  let closestTriggeredPOI: POI | null = null;
-  let closestDistance = Infinity;
+  if (unplayedPOIs.length === 0) {
+    return null;
+  }
+
+  const nextPOI = unplayedPOIs[0];
+  const dist = haversineDistance(
+    lat,
+    lng,
+    nextPOI.coordinates.lat,
+    nextPOI.coordinates.lng
+  );
 
   const defaultRadius =
     state.tripMode === 'city'
       ? CONFIG.TRIGGER_RADIUS.CITY_MODE_METERS
       : CONFIG.TRIGGER_RADIUS.ROUTE_MODE_METERS;
 
-  for (const poi of unplayedPOIs) {
-    const dist = haversineDistance(
-      lat,
-      lng,
-      poi.coordinates.lat,
-      poi.coordinates.lng
-    );
+  const triggerRadius = nextPOI.trigger_radius_meters || defaultRadius;
 
-    const triggerRadius = poi.trigger_radius_meters || defaultRadius;
-
-    if (dist <= triggerRadius) {
-      if (
-        !closestTriggeredPOI ||
-        poi.priority > closestTriggeredPOI.priority ||
-        (poi.priority === closestTriggeredPOI.priority && dist < closestDistance)
-      ) {
-        closestTriggeredPOI = poi;
-        closestDistance = dist;
-      }
-    }
-  }
-
-  if (closestTriggeredPOI) {
+  if (dist <= triggerRadius) {
     return {
-      poi: closestTriggeredPOI,
-      distanceMeters: closestDistance,
+      poi: nextPOI,
+      distanceMeters: dist,
       timestamp: new Date().toISOString(),
     };
   }
@@ -207,29 +196,16 @@ export function findNextPOI(
     return null;
   }
 
-  let closestPOI: POI | null = null;
-  let closestDistance = Infinity;
+  const nextPOI = unplayedPOIs[0];
+  const dist = haversineDistance(
+    lat,
+    lng,
+    nextPOI.coordinates.lat,
+    nextPOI.coordinates.lng
+  );
 
-  for (const poi of unplayedPOIs) {
-    const dist = haversineDistance(
-      lat,
-      lng,
-      poi.coordinates.lat,
-      poi.coordinates.lng
-    );
-
-    if (dist < closestDistance) {
-      closestPOI = poi;
-      closestDistance = dist;
-    }
-  }
-
-  if (closestPOI) {
-    return {
-      poi: closestPOI,
-      distanceMeters: closestDistance,
-    };
-  }
-
-  return null;
+  return {
+    poi: nextPOI,
+    distanceMeters: dist,
+  };
 }

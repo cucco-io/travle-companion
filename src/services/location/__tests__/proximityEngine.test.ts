@@ -62,14 +62,14 @@ describe('proximityEngine', () => {
   ];
 
   describe('initProximityEngine', () => {
-    it('should initialize state correctly and sort POIs by priority DESC', () => {
+    it('should initialize state correctly and keep POIs in pre-sorted route order', () => {
       const callback = jest.fn();
       const engine = initProximityEngine(pois, 'city', callback);
       const state = engine.getState();
 
-      expect(state.remainingPOIs[0].id).toBe('poi-high-priority');
-      expect(state.remainingPOIs[1].id).toBe('poi-far');
-      expect(state.remainingPOIs[2].id).toBe('poi-low-priority');
+      expect(state.remainingPOIs[0].id).toBe('poi-low-priority');
+      expect(state.remainingPOIs[1].id).toBe('poi-high-priority');
+      expect(state.remainingPOIs[2].id).toBe('poi-far');
       expect(state.playedPOIIds.size).toBe(0);
       expect(state.lastTriggerTime).toBe(0);
       expect(state.tripMode).toBe('city');
@@ -84,12 +84,12 @@ describe('proximityEngine', () => {
 
       expect(callback).toHaveBeenCalledTimes(1);
       const event = callback.mock.calls[0][0];
-      expect(event.poi.id).toBe('poi-high-priority'); // Highest priority triggered first
+      expect(event.poi.id).toBe('poi-low-priority'); // Sequential route order first unplayed POI triggered
       expect(event.distanceMeters).toBe(0);
       expect(event.timestamp).toBeDefined();
 
       const state = engine.getState();
-      expect(state.playedPOIIds.has('poi-high-priority')).toBe(true);
+      expect(state.playedPOIIds.has('poi-low-priority')).toBe(true);
       expect(state.lastTriggerTime).toBeGreaterThan(0);
     });
 
@@ -130,31 +130,31 @@ describe('proximityEngine', () => {
       expect(event).toBeNull();
     });
 
-    it('should trigger low priority POI if high priority is already in playedPOIIds', () => {
+    it('should trigger high priority POI if low priority is already in playedPOIIds', () => {
       const engine = initProximityEngine(pois, 'city', jest.fn());
       const state = engine.getState();
-      state.playedPOIIds.add('poi-high-priority');
+      state.playedPOIIds.add('poi-low-priority');
 
       const event = checkProximity(41.8902, 12.4922, state);
       expect(event).not.toBeNull();
-      expect(event?.poi.id).toBe('poi-low-priority');
+      expect(event?.poi.id).toBe('poi-high-priority');
     });
   });
 
   describe('findNextPOI', () => {
-    it('should return the closest unplayed POI and its distance', () => {
+    it('should return the next unplayed POI in route order and its distance', () => {
       const engine = initProximityEngine(pois, 'city', jest.fn());
       const state = engine.getState();
 
       // Rome coordinates
       const res = findNextPOI(41.8902, 12.4922, state);
       expect(res).not.toBeNull();
-      expect(res?.poi.id).toBe('poi-high-priority');
+      expect(res?.poi.id).toBe('poi-low-priority');
       expect(res?.distanceMeters).toBe(0);
 
-      // Milan coordinates: closest should be poi-far (at 43.0, 13.0)
+      // Milan coordinates: next unplayed POI is still poi-low-priority
       const res2 = findNextPOI(45.0, 9.0, state);
-      expect(res2?.poi.id).toBe('poi-far');
+      expect(res2?.poi.id).toBe('poi-low-priority');
     });
 
     it('should return null if all POIs have been played', () => {

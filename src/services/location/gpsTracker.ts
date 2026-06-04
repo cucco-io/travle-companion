@@ -15,11 +15,14 @@
  */
 
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { CONFIG } from '../../constants/config';
 import { GpsBreadcrumb } from '../../types/trip';
 import { POI } from '../../types/poi';
 import { addBreadcrumb } from '../storage/tripStorage';
 import { haversineDistance } from '../../utils/geo';
+
+export const BACKGROUND_LOCATION_TASK = 'background-location-task';
 
 /**
  * GPS accuracy mode — determines power consumption vs. precision tradeoff.
@@ -43,6 +46,39 @@ let isTrackingActive = false;
 let currentTripId: string | null = null;
 let lastBreadcrumbTime = 0;
 
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error('Background location task error:', error);
+    return;
+  }
+  if (data) {
+    const { locations } = data as { locations: Location.LocationObject[] };
+    if (!locations || locations.length === 0) return;
+
+    for (const location of locations) {
+      const lat = location.coords.latitude;
+      const lng = location.coords.longitude;
+      const accuracy = location.coords.accuracy || 0;
+      const timestamp = location.timestamp;
+
+      if (currentCallback) {
+        currentCallback({ lat, lng, accuracy, timestamp });
+      }
+
+      const now = Date.now();
+      if (currentTripId && now - lastBreadcrumbTime >= 30000) {
+        lastBreadcrumbTime = now;
+        const breadcrumb = createBreadcrumb(lat, lng);
+        try {
+          await addBreadcrumb(currentTripId, breadcrumb);
+        } catch (err) {
+          console.error('Failed to add background breadcrumb to SQLite:', err);
+        }
+      }
+    }
+  }
+});
+
 /**
  * Helper to start or restart the location subscription.
  */
@@ -58,7 +94,7 @@ async function startLocationWatch(): Promise<void> {
     accuracy:
       currentMode === 'high_accuracy'
         ? Location.Accuracy.High
-        : Location.Accuracy.Balanced,
+        : Location.Accuracy.Low,
     timeInterval: currentMode === 'high_accuracy' ? 3000 : 30000,
     distanceInterval:
       currentMode === 'high_accuracy'
@@ -90,6 +126,30 @@ async function startLocationWatch(): Promise<void> {
       }
     }
   );
+
+  const backgroundOptions: Location.LocationTaskOptions = {
+    accuracy:
+      currentMode === 'high_accuracy'
+        ? Location.Accuracy.High
+        : Location.Accuracy.Low,
+    timeInterval: currentMode === 'high_accuracy' ? 3000 : 30000,
+    distanceInterval:
+      currentMode === 'high_accuracy'
+        ? 10
+        : CONFIG.GPS.SIGNIFICANT_CHANGE_METERS,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: 'Travel Companion Tracking',
+      notificationBody: 'Tracking your location to narrate surrounding landmarks.',
+      notificationColor: '#3b82f6',
+    },
+  };
+
+  try {
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, backgroundOptions);
+  } catch (err) {
+    console.error('Failed to start background location updates:', err);
+  }
 }
 
 /**
@@ -121,6 +181,9 @@ export async function startTracking(
       currentSubscription.remove();
       currentSubscription = null;
     }
+    Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch((err) => {
+      console.error('Failed to stop background location updates:', err);
+    });
   };
 }
 
@@ -184,6 +247,10 @@ export function createBreadcrumb(lat: number, lng: number): GpsBreadcrumb {
  * Requests location permissions from the user.
  */
 export async function requestLocationPermissions(): Promise<boolean> {
-  const { status } = await Location.requestForegroundPermissionsAsync();
-  return status === 'granted';
+  const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+  if (foregroundStatus !== 'granted') {
+    return false;
+  }
+  const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+  return backgroundStatus === 'granted';
 }

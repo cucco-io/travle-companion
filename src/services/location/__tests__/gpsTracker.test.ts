@@ -11,11 +11,19 @@ import { POI } from '../../../types/poi';
 
 jest.mock('expo-location', () => ({
   Accuracy: {
+    Low: 1,
     Balanced: 3,
     High: 4,
   },
   requestForegroundPermissionsAsync: jest.fn(),
+  requestBackgroundPermissionsAsync: jest.fn(),
   watchPositionAsync: jest.fn(),
+  startLocationUpdatesAsync: jest.fn(),
+  stopLocationUpdatesAsync: jest.fn(),
+}));
+
+jest.mock('expo-task-manager', () => ({
+  defineTask: jest.fn(),
 }));
 
 jest.mock('../../storage/tripStorage', () => ({
@@ -28,20 +36,40 @@ describe('gpsTracker', () => {
   });
 
   describe('requestLocationPermissions', () => {
-    it('should return true if status is granted', async () => {
+    it('should return true if both foreground and background permissions are granted', async () => {
       (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
+        status: 'granted',
+      });
+      (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({
         status: 'granted',
       });
       const res = await requestLocationPermissions();
       expect(res).toBe(true);
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalled();
+      expect(Location.requestBackgroundPermissionsAsync).toHaveBeenCalled();
     });
 
-    it('should return false if status is denied', async () => {
+    it('should return false if foreground permission is denied', async () => {
       (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
         status: 'denied',
       });
       const res = await requestLocationPermissions();
       expect(res).toBe(false);
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalled();
+      expect(Location.requestBackgroundPermissionsAsync).not.toHaveBeenCalled();
+    });
+
+    it('should return false if foreground is granted but background is denied', async () => {
+      (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
+        status: 'granted',
+      });
+      (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({
+        status: 'denied',
+      });
+      const res = await requestLocationPermissions();
+      expect(res).toBe(false);
+      expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalled();
+      expect(Location.requestBackgroundPermissionsAsync).toHaveBeenCalled();
     });
   });
 
@@ -112,6 +140,11 @@ describe('gpsTracker', () => {
       (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
         status: 'granted',
       });
+      (Location.requestBackgroundPermissionsAsync as jest.Mock).mockResolvedValue({
+        status: 'granted',
+      });
+      (Location.startLocationUpdatesAsync as jest.Mock).mockResolvedValue(undefined);
+      (Location.stopLocationUpdatesAsync as jest.Mock).mockResolvedValue(undefined);
     });
 
     it('should throw error if permission is denied', async () => {
@@ -126,6 +159,7 @@ describe('gpsTracker', () => {
       const unsubscribe = await startTracking(onUpdate, 'high_accuracy');
 
       expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalled();
+      expect(Location.requestBackgroundPermissionsAsync).toHaveBeenCalled();
       expect(watchPositionMock).toHaveBeenCalledWith(
         expect.objectContaining({
           accuracy: Location.Accuracy.High,
@@ -133,6 +167,14 @@ describe('gpsTracker', () => {
           distanceInterval: 10,
         }),
         expect.any(Function)
+      );
+      expect(Location.startLocationUpdatesAsync).toHaveBeenCalledWith(
+        'background-location-task',
+        expect.objectContaining({
+          accuracy: Location.Accuracy.High,
+          timeInterval: 3000,
+          distanceInterval: 10,
+        })
       );
 
       // Trigger position watch callback
@@ -152,6 +194,7 @@ describe('gpsTracker', () => {
       // Cleanup
       unsubscribe();
       expect(removeMock).toHaveBeenCalled();
+      expect(Location.stopLocationUpdatesAsync).toHaveBeenCalledWith('background-location-task');
     });
 
     it('should write breadcrumb to SQLite on location update when tripId is provided and time interval > 30s', async () => {
