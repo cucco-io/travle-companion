@@ -72,6 +72,15 @@ interface QueueItem<T = any> {
  * A generic request throttler that enforces a max QPS limit.
  */
 export class RateLimiter {
+  private static instance: RateLimiter | null = null;
+
+  public static getInstance() {
+    if (!RateLimiter.instance) {
+      RateLimiter.instance = new RateLimiter({ maxQPS: 12, maxRetries: 3 });
+    }
+    return RateLimiter.instance;
+  }
+
   private config: RateLimiterConfig;
   private aborted = false;
   private queue: QueueItem[] = [];
@@ -403,3 +412,5 @@ export class RateLimiter {
     }
   }
 }
+
+export const rateLimiter = RateLimiter.getInstance();

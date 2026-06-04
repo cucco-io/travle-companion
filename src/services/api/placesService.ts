@@ -19,45 +19,58 @@ import {
   PlacesSearchResponse,
   PlacesResult,
 } from '../../types/api';
+import { interestToPOICategories, rankPOIs } from '../../utils/poiFilter';
+import { TripMode } from '../../types/trip';
+import { RateLimiter } from '../rateLimiter';
+import { callGemini } from './geminiService';
+import { buildCurationPrompt } from '../../utils/promptBuilder';
 
 /**
  * Maps Google Places types to our internal POICategory enum.
- *
- * TODO: Implement mapping logic. Google Places uses types like
- * 'tourist_attraction', 'museum', 'church', 'park', 'point_of_interest', etc.
- * Map these to our POICategory values. Default to 'other' for unknown types.
- *
- * @param googleTypes - Array of Google Places type strings
- * @returns The most appropriate POICategory
  */
 export function mapGoogleTypeToPOICategory(
   googleTypes: string[]
 ): POICategory {
-  // TODO: Implement type mapping
-  // Priority order: more specific types should win over generic ones
-  // e.g., 'museum' > 'point_of_interest'
-  throw new Error('Not implemented');
+  if (!googleTypes || googleTypes.length === 0) {
+    return 'other';
+  }
+
+  // Define priority order: more specific types first
+  const mappings: { type: string; category: POICategory }[] = [
+    { type: 'museum', category: 'museum' },
+    { type: 'church', category: 'church' },
+    { type: 'place_of_worship', category: 'church' },
+    { type: 'mosque', category: 'church' },
+    { type: 'synagogue', category: 'church' },
+    { type: 'hindu_temple', category: 'church' },
+    { type: 'national_park', category: 'natural_landmark' },
+    { type: 'park', category: 'park' },
+    { type: 'amusement_park', category: 'park' },
+    { type: 'monument', category: 'monument' },
+    { type: 'tourist_attraction', category: 'historical_landmark' },
+    { type: 'city_hall', category: 'cultural_site' },
+    { type: 'library', category: 'cultural_site' },
+    { type: 'art_gallery', category: 'cultural_site' },
+    { type: 'cemetery', category: 'historical_landmark' },
+    { type: 'castle', category: 'historical_landmark' },
+    { type: 'archaeological_site', category: 'historical_landmark' },
+    { type: 'aquarium', category: 'natural_landmark' },
+    { type: 'zoo', category: 'natural_landmark' },
+    { type: 'natural_feature', category: 'natural_landmark' },
+    { type: 'point_of_interest', category: 'other' },
+  ];
+
+  for (const mapping of mappings) {
+    if (googleTypes.includes(mapping.type)) {
+      return mapping.category;
+    }
+  }
+
+  return 'other';
 }
 
 /**
- * Fetches nearby points of interest from Google Places API.
- *
- * @param lat - Latitude of the search center
- * @param lng - Longitude of the search center
- * @param radiusMeters - Search radius in meters (max 50,000)
- * @param types - Google Places type filters (e.g., 'tourist_attraction', 'museum')
- * @returns Array of raw PlacesResult objects from the API
- *
- * Implementation notes:
- * - Use the Google Places Nearby Search endpoint (New or Legacy)
- * - Pass `type` parameter to filter results
- * - Handle response statuses: 'OK', 'ZERO_RESULTS', 'OVER_QUERY_LIMIT', etc.
- * - Respect rate limits — this function should be called through the RateLimiter
- * - Include language parameter to get localized names
- *
- * @throws Error if API key is missing or API returns an error status
- *
- * @see https://developers.google.com/maps/documentation/places/web-service/nearby-search
+ * Fetches nearby places from Google Places API (single page).
  */
 export async function fetchNearbyPlaces(
   lat: number,
@@ -65,32 +78,29 @@ export async function fetchNearbyPlaces(
   radiusMeters: number,
   types: string[]
 ): Promise<PlacesResult[]> {
-  // TODO: Implement Google Places API integration
-  // 1. Construct the request URL with API key, location, radius, type
-  // 2. Make the HTTP request (use fetch or axios)
-  // 3. Parse the response JSON
-  // 4. Handle pagination (next_page_token) if needed
-  // 5. Return the results array
-  throw new Error('Not implemented');
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google Places API key is missing');
+  }
+
+  const typeParam = types.length > 0 ? `&type=${types[0]}` : '';
+  const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radiusMeters}${typeParam}&key=${apiKey}`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Google Places API request failed: ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as PlacesSearchResponse;
+  if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+    throw new Error(`Google Places API returned error status: ${data.status}`);
+  }
+
+  return data.results || [];
 }
 
 /**
  * Fetches all pages of nearby places results (handles pagination).
- *
- * Google Places API returns at most 20 results per page with a
- * `next_page_token`. This function follows all pages.
- *
- * @param lat - Latitude of the search center
- * @param lng - Longitude of the search center
- * @param radiusMeters - Search radius in meters
- * @param types - Google Places type filters
- * @param maxResults - Maximum total results to fetch (default: 60 — 3 pages)
- * @returns Accumulated array of PlacesResult objects
- *
- * Implementation notes:
- * - Google requires a short delay (~2s) before using next_page_token
- * - Stop pagination when maxResults is reached or no more pages
- * - Log the number of results fetched per page for debugging
  */
 export async function fetchAllNearbyPlaces(
   lat: number,
@@ -99,49 +109,295 @@ export async function fetchAllNearbyPlaces(
   types: string[],
   maxResults?: number
 ): Promise<PlacesResult[]> {
-  // TODO: Implement paginated fetching
-  // 1. Call fetchNearbyPlaces for the first page
-  // 2. If next_page_token exists and under maxResults, wait ~2s and fetch next
-  // 3. Concatenate and return all results
-  throw new Error('Not implemented');
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google Places API key is missing');
+  }
+
+  const results: PlacesResult[] = [];
+  let nextPageToken: string | undefined = undefined;
+  let pageCount = 0;
+  const limit = maxResults ?? 60; // default to 60 (3 pages)
+
+  do {
+    let url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?key=${apiKey}`;
+    if (nextPageToken) {
+      // Respect the 2-second delay for page tokens
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      url += `&pagetoken=${nextPageToken}`;
+    } else {
+      const typeParam = types.length > 0 ? `&type=${types[0]}` : '';
+      url += `&location=${lat},${lng}&radius=${radiusMeters}${typeParam}`;
+    }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Google Places API request failed: ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as PlacesSearchResponse;
+    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+      throw new Error(`Google Places API returned error status: ${data.status}`);
+    }
+
+    if (data.results) {
+      results.push(...data.results);
+    }
+
+    nextPageToken = data.next_page_token;
+    pageCount++;
+  } while (nextPageToken && results.length < limit && pageCount < 3);
+
+  return results.slice(0, limit);
 }
 
 /**
  * Transforms a raw PlacesResult into our internal POI shape.
- *
- * @param place - A single Google Places result
- * @param triggerRadiusMeters - The trigger radius to assign (depends on trip mode)
- * @returns A partial POI object (narration fields will be empty until Gemini fills them)
- *
- * Implementation notes:
- * - Generate a UUID for the `id` field
- * - Map Google types to POICategory via mapGoogleTypeToPOICategory
- * - Extract photo URL using the Places Photo endpoint if photos exist
- * - Set narration_text, narration_word_count, audio_file_path to defaults
- * - Set priority based on rating * user_ratings_total (normalized)
  */
 export function transformPlaceToPOI(
   place: PlacesResult,
   triggerRadiusMeters: number
 ): POI {
-  // TODO: Implement transformation logic
-  throw new Error('Not implemented');
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY || '';
+  let imageUrl: string | null = null;
+  if (place.photos && place.photos.length > 0) {
+    const photoRef = place.photos[0].photo_reference;
+    imageUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${photoRef}&key=${apiKey}`;
+  }
+
+  const category = mapGoogleTypeToPOICategory(place.types ?? []);
+  const rating = place.rating ?? 0;
+
+  return {
+    id: place.place_id,
+    name: place.name,
+    category,
+    coordinates: {
+      lat: place.geometry.location.lat,
+      lng: place.geometry.location.lng,
+    },
+    rating,
+    narration_text: '',
+    narration_word_count: 0,
+    estimated_listen_minutes: 0,
+    audio_file_path: null,
+    trigger_radius_meters: triggerRadiusMeters,
+    priority: place.rating ?? 1.0,
+    image_url: imageUrl,
+    image_local_path: null,
+    bookmarked: false,
+    played_at: null,
+  };
 }
 
 /**
  * Builds a Google Places photo URL from a photo reference.
- *
- * @param photoReference - The photo_reference from a Places result
- * @param maxWidth - Maximum width in pixels (default: 400)
- * @returns Full URL to the photo image
- *
- * @see https://developers.google.com/maps/documentation/places/web-service/photos
  */
 export function getPhotoUrl(
   photoReference: string,
   maxWidth?: number
 ): string {
-  // TODO: Construct the Places Photo URL with API key
-  // Format: https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=...&key=...
-  throw new Error('Not implemented');
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY || '';
+  const width = maxWidth ?? 400;
+  return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${width}&photoreference=${photoReference}&key=${apiKey}`;
+}
+
+/**
+ * Helper to map category/interest to Google Places search config
+ */
+function getGoogleSearchConfig(category: string): { type?: string; keyword?: string } {
+  switch (category) {
+    case 'historical_landmark':
+      return { type: 'tourist_attraction' };
+    case 'museum':
+      return { type: 'museum' };
+    case 'church':
+      return { type: 'place_of_worship' };
+    case 'park':
+      return { type: 'park' };
+    case 'natural_landmark':
+      return { type: 'natural_feature' };
+    case 'monument':
+      return { type: 'tourist_attraction', keyword: 'monument' };
+    case 'cultural_site':
+      return { type: 'tourist_attraction', keyword: 'cultural' };
+    case 'quirky':
+      return { type: 'tourist_attraction', keyword: 'quirky' };
+    default:
+      return { type: 'point_of_interest' };
+  }
+}
+
+/**
+ * Fetches nearby POIs and maps them to POI interfaces.
+ */
+export async function fetchNearbyPOIs(
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+  categories: string[]
+): Promise<POI[]> {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google Places API key is missing');
+  }
+
+  // Normalize categories
+  const poiCategories: string[] = [];
+  for (const cat of categories) {
+    const mapped = interestToPOICategories(cat as any);
+    if (mapped && mapped.length > 0) {
+      poiCategories.push(...mapped);
+    } else {
+      poiCategories.push(cat);
+    }
+  }
+
+  // Deduplicate
+  const uniquePoiCategories = Array.from(new Set(poiCategories));
+  if (uniquePoiCategories.length === 0) {
+    uniquePoiCategories.push('other');
+  }
+
+  const allPlacesMap = new Map<string, PlacesResult>();
+
+  for (const category of uniquePoiCategories) {
+    const searchConfig = getGoogleSearchConfig(category);
+    let pageCount = 0;
+    let nextPageToken: string | undefined = undefined;
+
+    do {
+      let url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?key=${apiKey}`;
+      if (nextPageToken) {
+        // Pagination delay
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        url += `&pagetoken=${nextPageToken}`;
+      } else {
+        url += `&location=${lat},${lng}&radius=${radiusMeters}`;
+        if (searchConfig.type) {
+          url += `&type=${searchConfig.type}`;
+        }
+        if (searchConfig.keyword) {
+          url += `&keyword=${encodeURIComponent(searchConfig.keyword)}`;
+        }
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Google Places API request failed: ${response.statusText}`);
+      }
+
+      const data = (await response.json()) as PlacesSearchResponse;
+      if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+        throw new Error(`Google Places API returned error status: ${data.status}`);
+      }
+
+      if (data.results) {
+        for (const place of data.results) {
+          allPlacesMap.set(place.place_id, place);
+        }
+      }
+
+      nextPageToken = data.next_page_token;
+      pageCount++;
+    } while (nextPageToken && pageCount < 3);
+  }
+
+  const pois: POI[] = [];
+  for (const place of allPlacesMap.values()) {
+    pois.push(transformPlaceToPOI(place, 100)); // Default trigger radius for nearby POIs
+  }
+
+  return pois;
+}
+
+/**
+ * Fetches and deduplicates POIs along a list of search points.
+ */
+export async function fetchPOIsAlongRoute(
+  searchPoints: { lat: number; lng: number }[],
+  categories: string[]
+): Promise<POI[]> {
+  const allPOIsMap = new Map<string, POI>();
+  const radius = 3200; // default for route mode (2 miles)
+
+  for (const point of searchPoints) {
+    const pois = await fetchNearbyPOIs(point.lat, point.lng, radius, categories);
+    for (const poi of pois) {
+      allPOIsMap.set(poi.id, poi);
+    }
+  }
+
+  return Array.from(allPOIsMap.values());
+}
+
+/**
+ * Curates a list of raw POIs using Gemini API via the RateLimiter.
+ */
+export async function curatePOIs(
+  rawPOIs: POI[],
+  mode: TripMode,
+  budget: number
+): Promise<POI[]> {
+  if (rawPOIs.length === 0) {
+    return [];
+  }
+
+  const candidatePOIs = rawPOIs.map((p) => ({ name: p.name, category: p.category }));
+  const prompt = buildCurationPrompt(candidatePOIs, mode, budget);
+
+  const limiter = RateLimiter.getInstance();
+
+  const responseText = await limiter.enqueue(() =>
+    callGemini(prompt, { temperature: 0.3 })
+  );
+
+  let cleanText = responseText.trim();
+  if (cleanText.startsWith('```')) {
+    const lines = cleanText.split('\n');
+    if (lines[0].startsWith('```')) {
+      lines.shift();
+    }
+    if (lines[lines.length - 1].startsWith('```')) {
+      lines.pop();
+    }
+    cleanText = lines.join('\n').trim();
+  }
+
+  let selectedNames: string[] = [];
+  try {
+    const parsed = JSON.parse(cleanText) as { selected: string[] };
+    selectedNames = parsed.selected || [];
+  } catch (error) {
+    console.error('Failed to parse Gemini curation JSON output:', cleanText, error);
+    selectedNames = rawPOIs.map((p) => p.name);
+  }
+
+  const nameToPoiMap = new Map<string, POI>();
+  for (const poi of rawPOIs) {
+    nameToPoiMap.set(poi.name.toLowerCase(), poi);
+  }
+
+  const curatedPOIs: POI[] = [];
+  const selectedNameSet = new Set<string>();
+
+  for (let i = 0; i < selectedNames.length; i++) {
+    const name = selectedNames[i];
+    const poi = nameToPoiMap.get(name.toLowerCase());
+    if (poi) {
+      poi.priority = selectedNames.length - i;
+      curatedPOIs.push(poi);
+      selectedNameSet.add(name.toLowerCase());
+    }
+  }
+
+  // Fallback to avoid empty output
+  if (curatedPOIs.length === 0) {
+    for (const poi of rawPOIs) {
+      poi.priority = 1.0;
+      curatedPOIs.push(poi);
+    }
+  }
+
+  return rankPOIs(curatedPOIs, budget);
 }
