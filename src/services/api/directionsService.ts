@@ -18,6 +18,8 @@ import {
   DirectionsResponse,
   DirectionsRoute,
 } from '../../types/api';
+import { decodePolyline, samplePointsAlongPolyline } from '../../utils/geo';
+import { CONFIG } from '../../constants/config';
 
 /**
  * Fetches driving directions between two points from Google Directions API.
@@ -115,4 +117,75 @@ export function extractRouteMetrics(
   }
 
   return { distanceMeters, durationSeconds };
+}
+
+/**
+ * Fetches driving directions and returns the encoded polyline, total distance, and estimated duration.
+ *
+ * @param origin - Starting point address or coordinates (lat,lng)
+ * @param destination - Ending point address or coordinates (lat,lng)
+ * @returns Object containing the encoded polyline, total distance in meters, and duration in seconds
+ */
+export async function fetchRoute(
+  origin: string,
+  destination: string
+): Promise<{
+  encodedPolyline: string;
+  distanceMeters: number;
+  durationSeconds: number;
+}> {
+  const apiKey = process.env.GOOGLE_DIRECTIONS_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google Directions API key is missing');
+  }
+
+  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
+    origin
+  )}&destination=${encodeURIComponent(destination)}&mode=driving&alternatives=false&key=${apiKey}`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  const data = (await response.json());
+
+  if (data.status !== 'OK') {
+    throw new Error(`Directions API error: ${data.status}`);
+  }
+
+  if (!data.routes || data.routes.length === 0) {
+    throw new Error('Directions API returned OK status but no routes found');
+  }
+
+  const route = data.routes[0];
+  const encodedPolyline = extractPolyline(route);
+  const { distanceMeters, durationSeconds } = extractRouteMetrics(route);
+
+  return {
+    encodedPolyline,
+    distanceMeters,
+    durationSeconds,
+  };
+}
+
+/**
+ * Decodes the polyline and samples points along it at specified or default intervals.
+ *
+ * @param encodedPolyline - Google-encoded polyline string
+ * @param intervalMeters - Distance between sample points in meters (defaults to config value)
+ * @returns Array of {lat, lng} coordinate objects
+ */
+export function getRouteSearchPoints(
+  encodedPolyline: string,
+  intervalMeters?: number
+): Array<{ lat: number; lng: number }> {
+  // Ensure the polyline is valid by attempting to decode it (as per requirements)
+  const decoded = decodePolyline(encodedPolyline);
+  if (decoded.length === 0) {
+    return [];
+  }
+
+  const interval = intervalMeters ?? CONFIG.API.ROUTE_SAMPLE_INTERVAL_METERS;
+  return samplePointsAlongPolyline(encodedPolyline, interval);
 }
