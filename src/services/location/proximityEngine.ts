@@ -18,7 +18,9 @@
  */
 
 import { POI } from '../../types/poi';
-import { TripMode, TripLogEntry } from '../../types/trip';
+import { TripMode } from '../../types/trip';
+import { haversineDistance } from '../../utils/geo';
+import { CONFIG } from '../../constants/config';
 
 /**
  * Event emitted when a POI's trigger zone is entered.
@@ -41,9 +43,6 @@ export type ProximityCallback = (event: ProximityEvent) => void;
 
 /**
  * State tracked internally by the proximity engine.
- *
- * TODO: This interface defines the internal state. Implementer should
- * manage this as a class instance or module-level state.
  */
 export interface ProximityEngineState {
   /** List of POIs that haven't been played yet */
@@ -61,18 +60,6 @@ export interface ProximityEngineState {
 
 /**
  * Initializes the proximity engine with a list of POIs for the trip.
- *
- * @param pois - All POIs for the active trip
- * @param tripMode - 'city' or 'route' — determines trigger radius
- * @param onProximityTrigger - Callback fired when a POI should be narrated
- * @returns Engine control functions (update, pause, resume, stop)
- *
- * Implementation notes:
- * - Store the POIs sorted by priority (highest first)
- * - Initialize the playedPOIIds set as empty
- * - Set lastTriggerTime to 0 (allows immediate first trigger)
- * - The engine is passive — it doesn't poll GPS. Instead, call updateLocation()
- *   on each GPS update from the gpsTracker.
  */
 export function initProximityEngine(
   pois: POI[],
@@ -87,61 +74,162 @@ export function initProximityEngine(
   stop: () => void;
   getState: () => ProximityEngineState;
 } {
-  // TODO: Implement proximity engine initialization
-  // Return an object with control functions
-  throw new Error('Not implemented');
+  const sortedPOIs = [...pois].sort((a, b) => b.priority - a.priority);
+
+  const state: ProximityEngineState = {
+    remainingPOIs: sortedPOIs,
+    lastTriggerTime: 0,
+    playedPOIIds: new Set<string>(),
+    tripMode,
+  };
+
+  let isPaused = false;
+  let isStopped = false;
+
+  const updateLocation = (lat: number, lng: number) => {
+    if (isPaused || isStopped) return;
+
+    const event = checkProximity(lat, lng, state);
+    if (event) {
+      state.playedPOIIds.add(event.poi.id);
+      state.lastTriggerTime = Date.now();
+      onProximityTrigger(event);
+    }
+  };
+
+  const markPlayed = (poiId: string) => {
+    state.playedPOIIds.add(poiId);
+  };
+
+  const markSkipped = (poiId: string) => {
+    state.playedPOIIds.add(poiId);
+  };
+
+  const pause = () => {
+    isPaused = true;
+  };
+
+  const resume = () => {
+    isPaused = false;
+  };
+
+  const stop = () => {
+    isStopped = true;
+    isPaused = false;
+  };
+
+  const getState = () => {
+    return state;
+  };
+
+  return {
+    updateLocation,
+    markPlayed,
+    markSkipped,
+    pause,
+    resume,
+    stop,
+    getState,
+  };
 }
 
 /**
  * Checks if any unplayed POI is within trigger range of the given location.
- *
- * @param lat - User's current latitude
- * @param lng - User's current longitude
- * @param state - Current engine state
- * @returns The closest triggered POI, or null if none are in range
- *
- * Implementation notes:
- * - For each remaining POI, calculate haversine distance
- * - Check if distance ≤ POI's trigger_radius_meters
- * - If multiple POIs are in range, pick the one with highest priority
- * - Check cooldown: skip if (now - lastTriggerTime) < CONFIG.NARRATION.COOLDOWN_MS
- * - Only trigger POIs that haven't been played or skipped
- *
- * @see src/utils/geo.ts haversineDistance
- * @see src/constants/config.ts NARRATION.COOLDOWN_MS
  */
 export function checkProximity(
   lat: number,
   lng: number,
   state: ProximityEngineState
 ): ProximityEvent | null {
-  // TODO: Implement proximity checking
-  // 1. Filter remaining POIs (not played, not skipped)
-  // 2. Calculate distance to each
-  // 3. Find closest within trigger radius
-  // 4. Check cooldown timer
-  // 5. Return ProximityEvent or null
-  throw new Error('Not implemented');
+  const now = Date.now();
+  if (now - state.lastTriggerTime < CONFIG.NARRATION.COOLDOWN_MS) {
+    return null;
+  }
+
+  const unplayedPOIs = state.remainingPOIs.filter(
+    (poi) => !state.playedPOIIds.has(poi.id)
+  );
+
+  let closestTriggeredPOI: POI | null = null;
+  let closestDistance = Infinity;
+
+  const defaultRadius =
+    state.tripMode === 'city'
+      ? CONFIG.TRIGGER_RADIUS.CITY_MODE_METERS
+      : CONFIG.TRIGGER_RADIUS.ROUTE_MODE_METERS;
+
+  for (const poi of unplayedPOIs) {
+    const dist = haversineDistance(
+      lat,
+      lng,
+      poi.coordinates.lat,
+      poi.coordinates.lng
+    );
+
+    const triggerRadius = poi.trigger_radius_meters || defaultRadius;
+
+    if (dist <= triggerRadius) {
+      if (
+        !closestTriggeredPOI ||
+        poi.priority > closestTriggeredPOI.priority ||
+        (poi.priority === closestTriggeredPOI.priority && dist < closestDistance)
+      ) {
+        closestTriggeredPOI = poi;
+        closestDistance = dist;
+      }
+    }
+  }
+
+  if (closestTriggeredPOI) {
+    return {
+      poi: closestTriggeredPOI,
+      distanceMeters: closestDistance,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  return null;
 }
 
 /**
  * Finds the next upcoming POI based on the user's current location.
- *
- * Used by the GPS tracker to determine when to switch accuracy modes.
- *
- * @param lat - User's current latitude
- * @param lng - User's current longitude
- * @param state - Current engine state
- * @returns The closest unplayed POI and its distance, or null if all played
  */
 export function findNextPOI(
   lat: number,
   lng: number,
   state: ProximityEngineState
 ): { poi: POI; distanceMeters: number } | null {
-  // TODO: Implement next POI finding
-  // 1. Filter remaining (unplayed) POIs
-  // 2. Calculate distance to each
-  // 3. Return the closest one
-  throw new Error('Not implemented');
+  const unplayedPOIs = state.remainingPOIs.filter(
+    (poi) => !state.playedPOIIds.has(poi.id)
+  );
+
+  if (unplayedPOIs.length === 0) {
+    return null;
+  }
+
+  let closestPOI: POI | null = null;
+  let closestDistance = Infinity;
+
+  for (const poi of unplayedPOIs) {
+    const dist = haversineDistance(
+      lat,
+      lng,
+      poi.coordinates.lat,
+      poi.coordinates.lng
+    );
+
+    if (dist < closestDistance) {
+      closestPOI = poi;
+      closestDistance = dist;
+    }
+  }
+
+  if (closestPOI) {
+    return {
+      poi: closestPOI,
+      distanceMeters: closestDistance,
+    };
+  }
+
+  return null;
 }

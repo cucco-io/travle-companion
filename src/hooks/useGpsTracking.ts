@@ -11,8 +11,14 @@
  * - React (useState, useEffect, useCallback, useRef)
  */
 
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { GpsBreadcrumb } from '../types/trip';
-import { GpsAccuracyMode } from '../services/location/gpsTracker';
+import {
+  GpsAccuracyMode,
+  startTracking as startGpsTracker,
+  switchAccuracyMode,
+  requestLocationPermissions,
+} from '../services/location/gpsTracker';
 
 /**
  * State returned by the useGpsTracking hook.
@@ -39,42 +45,110 @@ export interface GpsTrackingState {
 
 /**
  * Hook for managing GPS tracking during an active trip.
- *
- * @returns Object with tracking state and control functions
- *
- * Usage:
- * ```tsx
- * const {
- *   isTracking,
- *   currentLocation,
- *   breadcrumbs,
- *   startTracking,
- *   stopTracking,
- *   switchMode,
- * } = useGpsTracking();
- * ```
- *
- * Implementation notes:
- * - Use useState for isTracking, accuracyMode, currentLocation, etc.
- * - Use useRef to hold the cleanup function from gpsTracker.startTracking()
- * - Use useEffect for cleanup on unmount (stop tracking)
- * - startTracking: request permissions, then call gpsTracker.startTracking()
- * - stopTracking: call the cleanup function, reset state
- * - switchMode: call gpsTracker.switchAccuracyMode() and update state
- * - Accumulate breadcrumbs in a ref (not state — to avoid excessive re-renders)
- * - Expose breadcrumbs via a getter that copies the ref value
  */
 export function useGpsTracking(): GpsTrackingState & {
-  startTracking: () => Promise<void>;
+  startTracking: (tripId?: string) => Promise<void>;
   stopTracking: () => void;
   switchMode: (mode: GpsAccuracyMode) => Promise<void>;
   clearBreadcrumbs: () => void;
 } {
-  // TODO: Implement GPS tracking hook
-  // 1. Initialize state with defaults
-  // 2. Implement startTracking with permission check
-  // 3. Implement stopTracking with cleanup
-  // 4. Implement switchMode
-  // 5. Return state and control functions
-  throw new Error('Not implemented');
+  const [isTracking, setIsTracking] = useState(false);
+  const [accuracyMode, setAccuracyMode] = useState<GpsAccuracyMode>('power_saving');
+  const [currentLocation, setCurrentLocation] = useState<{
+    lat: number;
+    lng: number;
+    accuracy: number;
+  } | null>(null);
+  const [hasPermission, setHasPermission] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const breadcrumbsRef = useRef<GpsBreadcrumb[]>([]);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  // Clean up tracking on unmount
+  useEffect(() => {
+    return () => {
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
+      }
+    };
+  }, []);
+
+  const startTracking = useCallback(async (tripId?: string) => {
+    try {
+      setError(null);
+      const permitted = await requestLocationPermissions();
+      setHasPermission(permitted);
+      if (!permitted) {
+        throw new Error('Location permissions denied');
+      }
+
+      if (cleanupRef.current) {
+        cleanupRef.current();
+      }
+
+      const cleanup = await startGpsTracker(
+        (location) => {
+          setCurrentLocation({
+            lat: location.lat,
+            lng: location.lng,
+            accuracy: location.accuracy,
+          });
+
+          breadcrumbsRef.current.push({
+            timestamp: new Date(location.timestamp).toISOString(),
+            lat: location.lat,
+            lng: location.lng,
+          });
+        },
+        accuracyMode,
+        tripId
+      );
+
+      cleanupRef.current = cleanup;
+      setIsTracking(true);
+    } catch (err: any) {
+      setError(err.message || 'Failed to start GPS tracking');
+      setIsTracking(false);
+      throw err;
+    }
+  }, [accuracyMode]);
+
+  const stopTracking = useCallback(() => {
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+    setIsTracking(false);
+    setCurrentLocation(null);
+  }, []);
+
+  const switchMode = useCallback(async (mode: GpsAccuracyMode) => {
+    try {
+      setAccuracyMode(mode);
+      await switchAccuracyMode(mode);
+    } catch (err: any) {
+      setError(err.message || 'Failed to switch accuracy mode');
+    }
+  }, []);
+
+  const clearBreadcrumbs = useCallback(() => {
+    breadcrumbsRef.current = [];
+  }, []);
+
+  return {
+    isTracking,
+    accuracyMode,
+    currentLocation,
+    hasPermission,
+    error,
+    get breadcrumbs() {
+      return [...breadcrumbsRef.current];
+    },
+    startTracking,
+    stopTracking,
+    switchMode,
+    clearBreadcrumbs,
+  };
 }
