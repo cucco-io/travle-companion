@@ -1,30 +1,11 @@
-/**
- * src/services/api/geminiService.ts
- *
- * Google Gemini LLM API integration layer.
- * Used for two critical pipeline steps:
- * 1. POI Curation — selecting & ranking the best POIs from a candidate list
- * 2. Narration Generation — creating rich, engaging narrations for each POI
- *
- * Dependencies:
- * - GEMINI_API_KEY environment variable
- * - src/types/api.ts (GeminiCurationRequest/Response, GeminiNarrationRequest/Response)
- * - src/types/poi.ts (POI)
- * - src/types/trip.ts (TripPreferences)
- * - src/services/rateLimiter.ts (for throttling requests to ≤12 QPS)
- *
- * API Reference:
- * https://ai.google.dev/gemini-api/docs
- */
-
 import { POI } from '../../types/poi';
 import { TripPreferences, TripMode } from '../../types/trip';
 import {
-  GeminiCurationRequest,
   GeminiCurationResponse,
-  GeminiNarrationRequest,
-  GeminiNarrationResponse,
 } from '../../types/api';
+import { buildNarrationPrompt, getWordCountRange } from '../../utils/promptBuilder';
+import { RateLimiter } from '../rateLimiter';
+import { CONFIG } from '../../constants/config';
 
 /**
  * Sends a prompt to the Gemini API and returns the raw text response.
@@ -40,13 +21,6 @@ import {
  * @param options.maxOutputTokens - Max tokens in the response
  * @returns The raw text response from Gemini
  *
- * Implementation notes:
- * - Use the Google AI SDK (@google/generative-ai) or raw REST API
- * - Set responseType to 'application/json' when expecting structured output
- * - Handle 429 (rate limit) errors by throwing — the RateLimiter will retry
- * - Handle 500/503 errors with retry logic
- * - Log prompt token counts for cost tracking
- *
  * @throws Error on API failures, invalid responses, or missing API key
  */
 export async function callGemini(
@@ -57,13 +31,53 @@ export async function callGemini(
     maxOutputTokens?: number;
   }
 ): Promise<string> {
-  // TODO: Implement Gemini API call
-  // 1. Get API key from environment
-  // 2. Construct request body with model, prompt, generationConfig
-  // 3. POST to https://generativelanguage.googleapis.com/v1beta/models/MODEL:generateContent
-  // 4. Parse response.candidates[0].content.parts[0].text
-  // 5. Return the text
-  throw new Error('Not implemented');
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY environment variable is not set');
+  }
+
+  const model = options?.model || 'gemini-2.0-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const requestBody = {
+    contents: [
+      {
+        parts: [
+          {
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: options?.temperature,
+      maxOutputTokens: options?.maxOutputTokens,
+      responseMimeType: 'application/json',
+    },
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    const error = new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorText}`);
+    (error as any).status = response.status;
+    throw error;
+  }
+
+  const data = await response.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error('Empty response or invalid format from Gemini API');
+  }
+
+  return text;
 }
 
 /**
@@ -80,83 +94,118 @@ export async function callGemini(
  * @param budget - Maximum number of POIs to select
  * @returns Curated and ranked POI list with priority scores
  *
- * Implementation notes:
- * - Use promptBuilder.buildCurationPrompt() to construct the prompt
- * - Instruct Gemini to return JSON (structured output)
- * - Parse the JSON response into GeminiCurationResponse
- * - Validate that returned POIs exist in the candidate list
- * - If parsing fails, retry once with a clarified prompt
- *
- * @see src/utils/promptBuilder.ts for prompt construction
+ * @throws Error on implementation placeholder
  */
 export async function curatePOIs(
   candidatePOIs: Array<{ name: string; category: string }>,
   mode: TripMode,
   budget: number
 ): Promise<GeminiCurationResponse> {
-  // TODO: Implement POI curation via Gemini
-  // 1. Build prompt with promptBuilder.buildCurationPrompt()
-  // 2. Call callGemini with temperature=0.3 (deterministic)
-  // 3. Parse JSON response
-  // 4. Validate & return
   throw new Error('Not implemented');
 }
 
 /**
  * Uses Gemini to generate an engaging narration for a single POI.
  *
- * The narration style adapts based on POI category:
- * - Historical landmarks: narrative storytelling with key dates/figures
- * - Natural sites: ecological facts, geological history, sensory descriptions
- * - Churches/monuments: architectural details, artistic significance
- * - Quirky sites: fun facts, urban legends, unusual history
+ * The narration style adapts based on POI category.
  *
  * @param poi - The POI to generate a narration for
  * @param preferences - User's trip preferences (depth, kid-friendly, language)
- * @returns The generated narration text and word count
+ * @returns The generated narration text
  *
- * Implementation notes:
- * - Use promptBuilder.buildNarrationPrompt() to construct the prompt
- * - Temperature should be ~0.7 (creative but consistent)
- * - Validate word count is within the target range for the chosen depth
- * - If word count is too short/long, retry with adjusted instructions
- * - Narration should be written for audio — conversational tone, no visual references
- * - Kid-friendly mode: simpler vocabulary, age-appropriate content
- *
- * @see src/utils/promptBuilder.ts for prompt construction
- * @see src/constants/config.ts for word count targets
+ * @throws Error on API failures or JSON parsing errors
  */
 export async function generateNarration(
   poi: POI,
   preferences: TripPreferences
-): Promise<GeminiNarrationResponse> {
-  // TODO: Implement narration generation via Gemini
-  // 1. Build prompt with promptBuilder.buildNarrationPrompt()
-  // 2. Call callGemini with temperature=0.7
-  // 3. Extract narration text from response
-  // 4. Count words and validate against target range
-  // 5. Return narration text and word count
-  throw new Error('Not implemented');
+): Promise<string> {
+  const prompt = buildNarrationPrompt(poi, preferences);
+  const responseText = await callGemini(prompt, {
+    temperature: 0.7,
+  });
+
+  let narrationText = '';
+  try {
+    const parsed = JSON.parse(responseText);
+    if (parsed && typeof parsed.narrationText === 'string') {
+      narrationText = parsed.narrationText;
+    } else {
+      throw new Error('JSON response does not contain "narrationText" string field');
+    }
+  } catch (err) {
+    throw new Error(`Failed to parse Gemini narration response: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Validate word count target range
+  const wordCount = narrationText.trim() === '' ? 0 : narrationText.trim().split(/\s+/).length;
+  const range = getWordCountRange(preferences.narration_depth);
+  if (wordCount < range.min || wordCount > range.max) {
+    console.warn(
+      `Narration word count ${wordCount} is outside target range [${range.min}, ${range.max}] for depth "${preferences.narration_depth}"`
+    );
+  }
+
+  return narrationText;
+}
+
+/**
+ * Generates narrations for all POIs in a list using rate limiting.
+ *
+ * @param pois - Array of POIs to generate narrations for
+ * @param preferences - User's trip preferences
+ * @param onProgress - Optional callback for UI progress updates (completed/total)
+ * @param signal - Optional AbortSignal for cancellation support
+ * @returns Array of POIs with narration data filled in
+ */
+export async function generateAllNarrations(
+  pois: POI[],
+  preferences: TripPreferences,
+  onProgress?: (completed: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<POI[]> {
+  const limiter = new RateLimiter({
+    maxQPS: CONFIG.API.GEMINI_MAX_QPS,
+    maxRetries: CONFIG.API.GEMINI_MAX_RETRIES,
+  });
+
+  const results = await limiter.processAll(
+    pois,
+    async (poi) => {
+      return await generateNarration(poi, preferences);
+    },
+    onProgress,
+    signal
+  );
+
+  return pois.map((poi, index) => {
+    const result = results[index];
+    if (result && result.success && typeof result.value === 'string') {
+      const narrationText = result.value;
+      const wordCount = narrationText.trim() === '' ? 0 : narrationText.trim().split(/\s+/).length;
+      return {
+        ...poi,
+        narration_text: narrationText,
+        narration_word_count: wordCount,
+        estimated_listen_minutes: wordCount / 150,
+      };
+    } else {
+      console.error(
+        `Failed to generate narration for POI "${poi.name}":`,
+        result?.error || new Error('Unknown error')
+      );
+      return {
+        ...poi,
+        narration_text: 'Failed to generate narration',
+        narration_word_count: 0,
+        estimated_listen_minutes: 0,
+      };
+    }
+  });
 }
 
 /**
  * Generates narrations for a batch of POIs using the RateLimiter.
- *
- * This is the main entry point for the preparation phase. It queues
- * all narration requests through the RateLimiter to respect the
- * Gemini API's QPS limits.
- *
- * @param pois - Array of POIs to generate narrations for
- * @param preferences - User's trip preferences
- * @param onProgress - Callback for UI progress updates (completed/total)
- * @param signal - AbortSignal for cancellation support
- * @returns Array of POIs with narration_text and narration_word_count filled in
- *
- * Implementation notes:
- * - Use RateLimiter to throttle to ≤12 QPS
- * - Report progress via onProgress callback after each completion
- * - If a single narration fails after retries, mark it as failed but continue
- * - Support cancellation via AbortSignal
+ * Alias for generateAllNarrations, satisfying the existing template structure.
  */
 export async function generateNarrationsBatch(
   pois: POI[],
@@ -164,11 +213,5 @@ export async function generateNarrationsBatch(
   onProgress?: (completed: number, total: number) => void,
   signal?: AbortSignal
 ): Promise<POI[]> {
-  // TODO: Implement batch narration generation
-  // 1. Create a RateLimiter instance
-  // 2. Queue generateNarration() for each POI
-  // 3. Collect results, update POI objects with narration data
-  // 4. Report progress after each completion
-  // 5. Return updated POI array
-  throw new Error('Not implemented');
+  return generateAllNarrations(pois, preferences, onProgress, signal);
 }
