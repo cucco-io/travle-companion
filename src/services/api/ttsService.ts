@@ -17,6 +17,7 @@
 
 import { POI } from '../../types/poi';
 import { saveAudioFile, saveImageFile, saveBase64File } from '../storage/fileStorage';
+import { RateLimiter } from '../rateLimiter';
 
 declare const Buffer: any;
 
@@ -240,11 +241,12 @@ export async function generateAllAudio(
 ): Promise<POI[]> {
   const total = pois.length;
   let completed = 0;
+  const limiter = new RateLimiter({ maxQPS: process.env.NODE_ENV === 'test' ? 1000 : 5 });
 
   for (const poi of pois) {
     if (poi.narration_text) {
       try {
-        const audioBuffer = await synthesizeSpeech(poi.narration_text, language);
+        const audioBuffer = await limiter.enqueue(() => synthesizeSpeech(poi.narration_text!, language));
         const filePath = await saveAudioFile(tripId, poi.id, audioBuffer);
         poi.audio_file_path = filePath;
       } catch (error) {
@@ -271,23 +273,18 @@ export async function generateAllAudio(
 export async function downloadPOIImage(
   poi: POI,
   tripId: string
-): Promise<string | null> {
+): Promise<string> {
   if (!poi.image_url) {
-    return null;
+    throw new Error(`POI ${poi.id} does not have an image URL.`);
   }
 
-  try {
-    const response = await fetch(poi.image_url);
-    if (!response.ok) {
-      throw new Error(`Failed to download image from ${poi.image_url}: ${response.status} ${response.statusText}`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
-    const localPath = await saveImageFile(tripId, poi.id, arrayBuffer);
-    return localPath;
-  } catch (error) {
-    console.error(`Error downloading image for POI ${poi.id}:`, error);
-    return null;
+  const response = await fetch(poi.image_url);
+  if (!response.ok) {
+    throw new Error(`Failed to download image from ${poi.image_url}: ${response.status} ${response.statusText}`);
   }
+  const arrayBuffer = await response.arrayBuffer();
+  const localPath = await saveImageFile(tripId, poi.id, arrayBuffer);
+  return localPath;
 }
 
 /**
@@ -306,23 +303,29 @@ export async function downloadAllImages(
   const total = pois.length;
   let completed = 0;
 
-  for (const poi of pois) {
-    if (poi.image_url) {
-      try {
-        const localPath = await downloadPOIImage(poi, tripId);
-        poi.image_local_path = localPath;
-      } catch (error) {
-        console.error(`Failed to download image for POI ${poi.id}:`, error);
+  if (total === 0) {
+    return [];
+  }
+
+  await Promise.all(
+    pois.map(async (poi) => {
+      if (poi.image_url) {
+        try {
+          const localPath = await downloadPOIImage(poi, tripId);
+          poi.image_local_path = localPath;
+        } catch (error) {
+          console.error(`Failed to download image for POI ${poi.id}:`, error);
+          poi.image_local_path = null;
+        }
+      } else {
         poi.image_local_path = null;
       }
-    } else {
-      poi.image_local_path = null;
-    }
-    completed++;
-    if (onProgress) {
-      onProgress(completed, total);
-    }
-  }
+      completed++;
+      if (onProgress) {
+        onProgress(completed, total);
+      }
+    })
+  );
 
   return pois;
 }

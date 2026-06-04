@@ -261,10 +261,11 @@ describe('ttsService', () => {
   });
 
   describe('downloadPOIImage', () => {
-    test('returns null if image_url is missing', async () => {
+    test('throws error if image_url is missing', async () => {
       const poi = { id: 'poi-1', image_url: null } as POI;
-      const path = await downloadPOIImage(poi, 'trip-123');
-      expect(path).toBeNull();
+      await expect(downloadPOIImage(poi, 'trip-123')).rejects.toThrow(
+        'POI poi-1 does not have an image URL.'
+      );
       expect(global.fetch).not.toHaveBeenCalled();
     });
 
@@ -283,7 +284,7 @@ describe('ttsService', () => {
       expect(path).toBe('file:///mock-documents/trips/trip-123/images/poi-1.jpg');
     });
 
-    test('returns null on download failure', async () => {
+    test('throws error on download failure', async () => {
       const poi = { id: 'poi-1', image_url: 'http://example.com/image.jpg' } as POI;
       (global.fetch as jest.Mock).mockResolvedValue({
         ok: false,
@@ -291,8 +292,9 @@ describe('ttsService', () => {
         statusText: 'Not Found',
       });
 
-      const path = await downloadPOIImage(poi, 'trip-123');
-      expect(path).toBeNull();
+      await expect(downloadPOIImage(poi, 'trip-123')).rejects.toThrow(
+        'Failed to download image from http://example.com/image.jpg: 404 Not Found'
+      );
       expect(saveImageFile).not.toHaveBeenCalled();
     });
   });
