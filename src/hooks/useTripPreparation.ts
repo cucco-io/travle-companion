@@ -15,28 +15,33 @@
  * - src/services/api/geminiService.ts
  * - src/services/api/ttsService.ts
  * - src/services/storage/tripStorage.ts
- * - src/services/storage/fileStorage.ts
- * - src/utils/poiFilter.ts
  * - src/types/trip.ts
  * - React (useState, useCallback, useRef)
  */
 
+import { useState, useCallback, useRef } from 'react';
 import { Trip, TripPreferences, TripMode } from '../types/trip';
 import { POI } from '../types/poi';
+import { fetchRoute, getRouteSearchPoints } from '../services/api/directionsService';
+import { fetchNearbyPOIs, fetchPOIsAlongRoute, curatePOIs } from '../services/api/placesService';
+import { generateAllNarrations } from '../services/api/geminiService';
+import { generateAllAudio, downloadAllImages } from '../services/api/ttsService';
+import { createTrip, savePOIs, updateTripStatus } from '../services/storage/tripStorage';
+import { CONFIG } from '../constants/config';
 
 /**
  * Preparation pipeline stages for progress tracking.
  */
 export type PreparationStage =
   | 'idle'
-  | 'fetching_route'       // Route mode only: getting Directions
-  | 'fetching_pois'        // Searching Google Places for candidates
-  | 'curating'             // Gemini selecting & ranking POIs
-  | 'generating_narrations'// Gemini writing narrations (rate-limited)
-  | 'synthesizing_audio'   // TTS converting text to .mp3
-  | 'caching'              // Saving everything to local storage
-  | 'ready'                // All done — trip is ready to start
-  | 'error';               // Something went wrong
+  | 'fetching_route'        // Route mode only: getting Directions
+  | 'fetching_pois'         // Searching Google Places for candidates
+  | 'curating'              // Gemini selecting & ranking POIs
+  | 'generating_narrations' // Gemini writing narrations (rate-limited)
+  | 'synthesizing_audio'    // TTS converting text to .mp3
+  | 'caching'               // Saving everything to local storage
+  | 'ready'                 // All done — trip is ready to start
+  | 'error';                // Something went wrong
 
 /**
  * State returned by the useTripPreparation hook.
@@ -64,69 +69,279 @@ export interface PreparationState {
   isCancellable: boolean;
 }
 
+/** Internal params stored for retry */
+interface PrepareParams {
+  name: string;
+  mode: TripMode;
+  origin?: { name: string; lat: number; lng: number };
+  destination: { name: string; lat: number; lng: number };
+  preferences: TripPreferences;
+}
+
+/** Generates a UUID v4 */
+function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /**
  * Hook for managing the trip preparation pipeline.
- *
- * @returns Object with preparation state and control functions
- *
- * Usage:
- * ```tsx
- * const {
- *   stage,
- *   progress,
- *   statusMessage,
- *   trip,
- *   startPreparation,
- *   cancelPreparation,
- * } = useTripPreparation();
- *
- * // Start preparing a new city trip
- * await startPreparation({
- *   name: 'Weekend in Rome',
- *   mode: 'city',
- *   destination: { name: 'Rome', lat: 41.89, lng: 12.49 },
- *   preferences: {
- *     interests: ['history', 'architecture'],
- *     narration_depth: 'standard',
- *     kid_friendly: false,
- *     language: 'en',
- *   },
- * });
- * ```
- *
- * Implementation notes:
- * - Use useState for stage, progress, statusMessage, etc.
- * - Use useRef for the AbortController (for cancellation)
- * - startPreparation runs the full pipeline sequentially:
- *   1. Create trip record in SQLite (status: 'preparing')
- *   2. [Route mode only] Fetch directions, decode polyline, sample points
- *   3. Fetch POIs from Places API (multiple searches for route mode)
- *   4. Filter by interests, calculate budget
- *   5. Curate with Gemini
- *   6. Generate narrations with Gemini (batch, rate-limited)
- *   7. Synthesize audio with TTS
- *   8. Save POIs and audio files
- *   9. Update trip status to 'ready'
- * - cancelPreparation aborts the pipeline via AbortSignal
- * - On error, update stage to 'error' and set error message
- * - Clean up partial data on cancellation (delete incomplete files)
  */
 export function useTripPreparation(): PreparationState & {
-  startPreparation: (params: {
-    name: string;
-    mode: TripMode;
-    origin?: { name: string; lat: number; lng: number };
-    destination: { name: string; lat: number; lng: number };
-    preferences: TripPreferences;
-  }) => Promise<void>;
+  startPreparation: (params: PrepareParams) => Promise<void>;
   cancelPreparation: () => void;
   retryPreparation: () => Promise<void>;
 } {
-  // TODO: Implement trip preparation hook
-  // 1. Initialize state
-  // 2. Implement startPreparation with the full pipeline
-  // 3. Implement cancelPreparation with AbortController
-  // 4. Implement retryPreparation to resume from the failed stage
-  // 5. Update progress/statusMessage at each stage
-  throw new Error('Not implemented');
+  const [stage, setStage] = useState<PreparationStage>('idle');
+  const [progress, setProgress] = useState(0);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [poiCount, setPoiCount] = useState(0);
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isCancellable, setIsCancellable] = useState(false);
+
+  /** Stores last params so retryPreparation can replay the pipeline */
+  const lastParamsRef = useRef<PrepareParams | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const runPipeline = useCallback(async (params: PrepareParams): Promise<void> => {
+    abortControllerRef.current = new AbortController();
+    const { signal } = abortControllerRef.current;
+
+    const throwIfCancelled = (): void => {
+      if (signal.aborted) throw new Error('Preparation cancelled by user');
+    };
+
+    setError(null);
+    setIsCancellable(true);
+
+    try {
+      // -----------------------------------------------------------------------
+      // Step 1 — Create trip record in SQLite
+      // -----------------------------------------------------------------------
+      const tripId = generateUUID();
+      const now = new Date().toISOString();
+
+      const newTrip: Trip = {
+        id: tripId,
+        name: params.name,
+        mode: params.mode,
+        status: 'preparing',
+        preferences: params.preferences,
+        origin: params.origin ?? null,
+        destination: params.destination,
+        pois: [],
+        route_polyline: null,
+        created_at: now,
+        started_at: null,
+        completed_at: null,
+        total_size_mb: 0,
+      };
+
+      await createTrip(newTrip);
+      setTrip(newTrip);
+      throwIfCancelled();
+
+      // -----------------------------------------------------------------------
+      // Step 2 — Route mode: fetch directions & polyline
+      // -----------------------------------------------------------------------
+      let routePolyline: string | null = null;
+      let searchPoints: Array<{ lat: number; lng: number }> = [];
+
+      if (params.mode === 'route' && params.origin) {
+        setStage('fetching_route');
+        setProgress(0.05);
+        setStatusMessage('Plotting route...');
+
+        const originStr = `${params.origin.lat},${params.origin.lng}`;
+        const destStr = `${params.destination.lat},${params.destination.lng}`;
+        const routeResult = await fetchRoute(originStr, destStr);
+        routePolyline = routeResult.encodedPolyline;
+        newTrip.route_polyline = routePolyline;
+        setTrip({ ...newTrip });
+        searchPoints = getRouteSearchPoints(routePolyline);
+        throwIfCancelled();
+      }
+
+      // -----------------------------------------------------------------------
+      // Step 3 — Fetch POIs
+      // -----------------------------------------------------------------------
+      setStage('fetching_pois');
+      setProgress(0.15);
+      setStatusMessage('Finding points of interest...');
+
+      const interests = params.preferences.interests;
+      let rawPOIs: POI[] = [];
+
+      if (params.mode === 'route' && searchPoints.length > 0) {
+        rawPOIs = await fetchPOIsAlongRoute(searchPoints, interests);
+      } else {
+        rawPOIs = await fetchNearbyPOIs(
+          params.destination.lat,
+          params.destination.lng,
+          CONFIG.API.PLACES_SEARCH_RADIUS_METERS,
+          interests
+        );
+      }
+
+      setPoiCount(rawPOIs.length);
+      setStatusMessage(`Finding points of interest... ${rawPOIs.length} found`);
+      throwIfCancelled();
+
+      // -----------------------------------------------------------------------
+      // Step 4 — Curate with Gemini
+      // -----------------------------------------------------------------------
+      setStage('curating');
+      setProgress(0.3);
+      setStatusMessage('Curating best POIs...');
+
+      const budget = CONFIG.POI_BUDGET.MEDIUM;
+      const curatedPOIs = await curatePOIs(rawPOIs, params.mode, budget);
+      setPoiCount(curatedPOIs.length);
+      setStatusMessage(`Curating best POIs... ${curatedPOIs.length} selected`);
+      throwIfCancelled();
+
+      // -----------------------------------------------------------------------
+      // Step 5 — Generate narrations
+      // -----------------------------------------------------------------------
+      setStage('generating_narrations');
+      setProgress(0.45);
+      setStatusMessage(`Generating narrations... 0/${curatedPOIs.length}`);
+
+      const narrationOnProgress = (completed: number, total: number): void => {
+        setStatusMessage(`Generating narrations... ${completed}/${total}`);
+        setProgress(0.45 + (completed / total) * 0.2);
+      };
+
+      const narratedPOIs = await generateAllNarrations(
+        curatedPOIs,
+        params.preferences,
+        narrationOnProgress,
+        signal
+      );
+      throwIfCancelled();
+
+      // -----------------------------------------------------------------------
+      // Step 6 — Synthesize audio
+      // -----------------------------------------------------------------------
+      setStage('synthesizing_audio');
+      setProgress(0.65);
+      setStatusMessage(`Creating audio... 0/${narratedPOIs.length}`);
+
+      const audioOnProgress = (completed: number, total: number): void => {
+        setStatusMessage(`Creating audio... ${completed}/${total}`);
+        setProgress(0.65 + (completed / total) * 0.15);
+      };
+
+      const audioedPOIs = await generateAllAudio(
+        narratedPOIs,
+        tripId,
+        params.preferences.language,
+        audioOnProgress
+      );
+      throwIfCancelled();
+
+      // -----------------------------------------------------------------------
+      // Step 7 — Download images
+      // -----------------------------------------------------------------------
+      setStage('caching');
+      setProgress(0.8);
+      setStatusMessage(`Downloading images... 0/${audioedPOIs.length}`);
+
+      const imageOnProgress = (completed: number, total: number): void => {
+        setStatusMessage(`Downloading images... ${completed}/${total}`);
+        setProgress(0.8 + (completed / total) * 0.1);
+      };
+
+      const finalPOIs = await downloadAllImages(audioedPOIs, tripId, imageOnProgress);
+      throwIfCancelled();
+
+      // -----------------------------------------------------------------------
+      // Step 8 — Save POIs and update trip status to 'ready'
+      // -----------------------------------------------------------------------
+      setProgress(0.9);
+      setStatusMessage('Saving trip data...');
+
+      await savePOIs(tripId, finalPOIs);
+      await updateTripStatus(tripId, 'ready');
+
+      const updatedTrip: Trip = {
+        ...newTrip,
+        status: 'ready',
+        pois: finalPOIs,
+        route_polyline: routePolyline,
+      };
+
+      // Calculate estimated size
+      const totalWords = finalPOIs.reduce((sum, p) => sum + p.narration_word_count, 0);
+      const estimatedSizeMB = Math.round((totalWords / 150) * 0.5); // rough estimate
+      updatedTrip.total_size_mb = estimatedSizeMB;
+
+      setTrip(updatedTrip);
+      setPoiCount(finalPOIs.length);
+      setProgress(1.0);
+      setStatusMessage(`Trip ready! (~${estimatedSizeMB} MB)`);
+      setStage('ready');
+      setIsCancellable(false);
+    } catch (err) {
+      const isCancellation =
+        err instanceof Error && err.message.includes('cancelled');
+      if (isCancellation) {
+        setStage('idle');
+        setProgress(0);
+        setStatusMessage('');
+        setIsCancellable(false);
+      } else {
+        const message =
+          err instanceof Error ? err.message : 'An unexpected error occurred';
+        setError(message);
+        setStage('error');
+        setIsCancellable(false);
+      }
+    }
+  }, []);
+
+  const startPreparation = useCallback(
+    async (params: PrepareParams): Promise<void> => {
+      lastParamsRef.current = params;
+      setStage('idle');
+      setProgress(0);
+      setPoiCount(0);
+      setTrip(null);
+      setError(null);
+      await runPipeline(params);
+    },
+    [runPipeline]
+  );
+
+  const cancelPreparation = useCallback((): void => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  }, []);
+
+  const retryPreparation = useCallback(async (): Promise<void> => {
+    if (!lastParamsRef.current) return;
+    setStage('idle');
+    setProgress(0);
+    setPoiCount(0);
+    setError(null);
+    await runPipeline(lastParamsRef.current);
+  }, [runPipeline]);
+
+  return {
+    stage,
+    progress,
+    statusMessage,
+    poiCount,
+    trip,
+    error,
+    isCancellable,
+    startPreparation,
+    cancelPreparation,
+    retryPreparation,
+  };
 }
