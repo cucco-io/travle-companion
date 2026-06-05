@@ -100,13 +100,13 @@ The app needs geospatial math everywhere — calculating distances between GPS c
 | [poiFilter.ts](file:///Users/cucco/Documents/travle-companion/src/utils/poiFilter.ts) | Implement `getPOIBudget`, `filterByCategories`, `rankPOIs` |
 
 #### Acceptance Criteria
-- [ ] `haversineDistance` returns meters between two lat/lng pairs, accurate to within 0.1% of known values
-- [ ] `decodePolyline` correctly decodes Google's encoded polyline format
-- [ ] `samplePointsAlongPolyline` returns evenly-spaced points along a decoded polyline
-- [ ] `getPOIBudget` returns correct tier limits: small=15, medium=25, mega=30
-- [ ] `filterByCategories` maps `InterestCategory` → `POICategory` and filters correctly
-- [ ] `rankPOIs` sorts by `rating * priority` descending, then truncates to budget
-- [ ] All functions have unit tests (create `src/utils/__tests__/geo.test.ts` and `poiFilter.test.ts`)
+- [x] `haversineDistance` returns meters between two lat/lng pairs, accurate to within 0.1% of known values
+- [x] `decodePolyline` correctly decodes Google's encoded polyline format
+- [x] `samplePointsAlongPolyline` returns evenly-spaced points along a decoded polyline
+- [x] `getPOIBudget` returns correct tier limits: small=15, medium=25, mega=30
+- [x] `filterByCategories` maps `InterestCategory` → `POICategory` and filters correctly
+- [x] `rankPOIs` sorts by `rating * priority` descending, then truncates to budget
+- [x] All functions have unit tests (create `src/utils/__tests__/geo.test.ts` and `poiFilter.test.ts`)
 
 #### Key References
 - [config.ts](file:///Users/cucco/Documents/travle-companion/src/constants/config.ts) — POI budget numbers and distance thresholds
@@ -130,12 +130,12 @@ The app uses Gemini for two tasks: (1) **curating** a raw POI list down to the b
 | [promptBuilder.ts](file:///Users/cucco/Documents/travle-companion/src/utils/promptBuilder.ts) | Implement `buildCurationPrompt` and `buildNarrationPrompt` |
 
 #### Acceptance Criteria
-- [ ] `buildCurationPrompt` produces a prompt that:
+- [x] `buildCurationPrompt` produces a prompt that:
   - Lists all raw POIs by name + category
   - Asks Gemini to select only travel-worthy POIs
   - Asks for JSON output: `{ selected: string[] }` (POI IDs)
   - Respects the mode (city vs route — route mode should favor highway-visible landmarks)
-- [ ] `buildNarrationPrompt` produces a prompt that:
+- [x] `buildNarrationPrompt` produces a prompt that:
   - Adapts tone/depth by POI category:
     - Historical sites → narrative (who built it, what happened, why it matters)
     - Natural landmarks → geological/ecological context
@@ -144,7 +144,7 @@ The app uses Gemini for two tasks: (1) **curating** a raw POI list down to the b
   - Includes explicit word count constraint in prompt
   - Adjusts language for `kid_friendly` mode (simpler vocabulary, "did you know?" format)
   - Generates in the specified `language` (e.g., 'en', 'it', 'fr')
-- [ ] Unit tests for both functions verifying prompt structure for all category × depth × kid-friendly combinations
+- [x] Unit tests for both functions verifying prompt structure for all category × depth × kid-friendly combinations
 
 #### Key References
 - [config.ts](file:///Users/cucco/Documents/travle-companion/src/constants/config.ts) — Word count ranges per depth level
@@ -168,13 +168,13 @@ Google AI Studio's Gemini API has a 15 QPS throttle. We need a generic rate limi
 | [rateLimiter.ts](file:///Users/cucco/Documents/travle-companion/src/services/rateLimiter.ts) | Implement the `RateLimiter` class |
 
 #### Acceptance Criteria
-- [ ] `RateLimiter` accepts a `maxQPS` parameter and enforces it
-- [ ] Requests are queued and processed in FIFO order
-- [ ] On HTTP 429 response, retry with exponential backoff (1s → 2s → 4s, max 3 retries)
-- [ ] Supports a `onProgress(completed: number, total: number)` callback for UI
-- [ ] Supports cancellation via `cancel()` method — pending requests are dropped
-- [ ] Generic: works with any `() => Promise<T>` function
-- [ ] Unit tests using fake timers to verify:
+- [x] `RateLimiter` accepts a `maxQPS` parameter and enforces it
+- [x] Requests are queued and processed in FIFO order
+- [x] On HTTP 429 response, retry with exponential backoff (1s → 2s → 4s, max 3 retries)
+- [x] Supports a `onProgress(completed: number, total: number)` callback for UI
+- [x] Supports cancellation via `cancel()` method — pending requests are dropped
+- [x] Generic: works with any `() => Promise<T>` function
+- [x] Unit tests using fake timers to verify:
   - QPS enforcement (e.g., 12 requests in 1 second, 13th is delayed)
   - Retry logic with backoff
   - Cancellation behavior
@@ -208,25 +208,25 @@ The app needs persistent local storage for trips, POIs, trip logs, and GPS bread
 | [fileStorage.ts](file:///Users/cucco/Documents/travle-companion/src/services/storage/fileStorage.ts) | File system operations for audio/image files |
 
 #### Acceptance Criteria for `tripStorage.ts`
-- [ ] Initialize SQLite database with schema for: `trips`, `pois`, `trip_log_entries`, `gps_breadcrumbs`
-- [ ] `createTrip(trip: Trip): Promise<string>` — insert trip, return ID
-- [ ] `getTrip(id: string): Promise<Trip | null>` — fetch trip with all POIs
-- [ ] `getAllTrips(): Promise<Trip[]>` — list all trips ordered by `created_at` desc
-- [ ] `updateTripStatus(id: string, status: TripStatus): Promise<void>`
-- [ ] `savePOIs(tripId: string, pois: POI[]): Promise<void>` — bulk insert POIs
-- [ ] `updatePOI(poi: POI): Promise<void>` — update single POI (e.g., mark bookmarked, set played_at)
-- [ ] `addTripLogEntry(tripId: string, entry: TripLogEntry): Promise<void>`
-- [ ] `addBreadcrumb(tripId: string, breadcrumb: GpsBreadcrumb): Promise<void>`
-- [ ] `getTripLog(tripId: string): Promise<TripLogEntry[]>`
-- [ ] `deleteTrip(id: string): Promise<void>` — cascade delete POIs, logs, breadcrumbs, and files
+- [x] Initialize SQLite database with schema for: `trips`, `pois`, `trip_log_entries`, `gps_breadcrumbs`
+- [x] `createTrip(trip: Trip): Promise<string>` — insert trip, return ID
+- [x] `getTrip(id: string): Promise<Trip | null>` — fetch trip with all POIs
+- [x] `getAllTrips(): Promise<Trip[]>` — list all trips ordered by `created_at` desc
+- [x] `updateTripStatus(id: string, status: TripStatus): Promise<void>`
+- [x] `savePOIs(tripId: string, pois: POI[]): Promise<void>` — bulk insert POIs
+- [x] `updatePOI(poi: POI): Promise<void>` — update single POI (e.g., mark bookmarked, set played_at)
+- [x] `addTripLogEntry(tripId: string, entry: TripLogEntry): Promise<void>`
+- [x] `addBreadcrumb(tripId: string, breadcrumb: GpsBreadcrumb): Promise<void>`
+- [x] `getTripLog(tripId: string): Promise<TripLogEntry[]>`
+- [x] `deleteTrip(id: string): Promise<void>` — cascade delete POIs, logs, breadcrumbs, and files
 
 #### Acceptance Criteria for `fileStorage.ts`
-- [ ] `saveAudioFile(tripId: string, poiId: string, audioData: ArrayBuffer): Promise<string>` — save to `FileSystem.documentDirectory/trips/{tripId}/audio/{poiId}.mp3`, return local path
-- [ ] `saveImageFile(tripId: string, poiId: string, imageData: ArrayBuffer): Promise<string>` — similar for images
-- [ ] `getFilePath(tripId: string, type: 'audio' | 'image', poiId: string): string`
-- [ ] `deleteTripFiles(tripId: string): Promise<void>` — clean up all files for a trip
-- [ ] `getTripStorageSize(tripId: string): Promise<number>` — return total bytes used
-- [ ] Uses `expo-file-system` for all file operations
+- [x] `saveAudioFile(tripId: string, poiId: string, audioData: ArrayBuffer): Promise<string>` — save to `FileSystem.documentDirectory/trips/{tripId}/audio/{poiId}.mp3`, return local path
+- [x] `saveImageFile(tripId: string, poiId: string, imageData: ArrayBuffer): Promise<string>` — similar for images
+- [x] `getFilePath(tripId: string, type: 'audio' | 'image', poiId: string): string`
+- [x] `deleteTripFiles(tripId: string): Promise<void>` — clean up all files for a trip
+- [x] `getTripStorageSize(tripId: string): Promise<number>` — return total bytes used
+- [x] Uses `expo-file-system` for all file operations
 
 #### Key References
 - expo-sqlite docs: https://docs.expo.dev/versions/latest/sdk/sqlite/
@@ -253,14 +253,14 @@ In **Route Mode**, the app needs to plot the driving route from City A to City B
 | [directionsService.ts](file:///Users/cucco/Documents/travle-companion/src/services/api/directionsService.ts) | Implement `fetchRoute` and `getRouteSearchPoints` |
 
 #### Acceptance Criteria
-- [ ] `fetchRoute(origin, destination): Promise<DirectionsResponse>` calls the Google Directions API
-  - Uses `GOOGLE_DIRECTIONS_API_KEY` from env
-  - Returns encoded polyline, total distance, estimated duration
-  - Handles errors (invalid origin/destination, no route found, API key issues)
-- [ ] `getRouteSearchPoints(encodedPolyline, intervalMeters): {lat, lng}[]` 
-  - Uses `decodePolyline` and `samplePointsAlongPolyline` from WI-1's geo utils
-  - Default interval: ~24km (~15 miles) from config
-- [ ] Integration test with a real API call (can be skipped in CI, run manually)
+- [x] `fetchRoute(origin, destination): Promise<DirectionsResponse>` calls the Google Directions API
+  - [x] Uses `GOOGLE_DIRECTIONS_API_KEY` from env
+  - [x] Returns encoded polyline, total distance, estimated duration
+  - [x] Handles errors (invalid origin/destination, no route found, API key issues)
+- [x] `getRouteSearchPoints(encodedPolyline, intervalMeters): {lat, lng}[]` 
+  - [x] Uses `decodePolyline` and `samplePointsAlongPolyline` from WI-1's geo utils
+  - [x] Default interval: ~24km (~15 miles) from config
+- [x] Integration test with a real API call (can be skipped in CI, run manually)
 
 #### Key References
 - Google Directions API: https://developers.google.com/maps/documentation/directions/overview
@@ -283,20 +283,20 @@ The app needs to find interesting POIs near a city center or along a driving rou
 | [placesService.ts](file:///Users/cucco/Documents/travle-companion/src/services/api/placesService.ts) | Implement `fetchNearbyPOIs` and `fetchPOIsAlongRoute` |
 
 #### Acceptance Criteria
-- [ ] `fetchNearbyPOIs(lat, lng, radiusMeters, categories): Promise<POI[]>`
-  - Calls Google Places Nearby Search with type filters: `tourist_attraction`, `museum`, `church`, `park`, `point_of_interest`
-  - Sorts results by `user_ratings_total` (descending) to prioritize popular places
-  - Maps API response to our `POI` type (with sensible defaults for fields we fill later)
-  - Handles pagination (Places API returns max 20 per page, up to 3 pages)
-- [ ] `fetchPOIsAlongRoute(searchPoints: {lat, lng}[], categories): Promise<POI[]>`
-  - Iterates through search points from WI-5, calling `fetchNearbyPOIs` for each
-  - Deduplicates POIs that appear near multiple search points (same `place_id`)
-- [ ] `curatePOIs(rawPOIs: POI[], mode: TripMode, budget: number): Promise<POI[]>`
-  - Builds a curation prompt using `buildCurationPrompt` from WI-2
-  - Sends to Gemini API (uses rate limiter from WI-3)
-  - Parses Gemini's JSON response to filter the raw list
-  - Truncates to budget using `rankPOIs` from WI-1
-- [ ] Image URL extraction: for each selected POI, extract the first photo reference from Places API for later downloading
+- [x] `fetchNearbyPOIs(lat, lng, radiusMeters, categories): Promise<POI[]>`
+  - [x] Calls Google Places Nearby Search with type filters: `tourist_attraction`, `museum`, `church`, `park`, `point_of_interest`
+  - [x] Sorts results by `user_ratings_total` (descending) to prioritize popular places
+  - [x] Maps API response to our `POI` type (with sensible defaults for fields we fill later)
+  - [x] Handles pagination (Places API returns max 20 per page, up to 3 pages)
+- [x] `fetchPOIsAlongRoute(searchPoints: {lat, lng}[], categories): Promise<POI[]>`
+  - [x] Iterates through search points from WI-5, calling `fetchNearbyPOIs` for each
+  - [x] Deduplicates POIs that appear near multiple search points (same `place_id`)
+- [x] `curatePOIs(rawPOIs: POI[], mode: TripMode, budget: number): Promise<POI[]>`
+  - [x] Builds a curation prompt using `buildCurationPrompt` from WI-2
+  - [x] Sends to Gemini API (uses rate limiter from WI-3)
+  - [x] Parses Gemini's JSON response to filter the raw list
+  - [x] Truncates to budget using `rankPOIs` from WI-1
+- [x] Image URL extraction: for each selected POI, extract the first photo reference from Places API for later downloading
 
 #### Key References
 - Google Places Nearby Search: https://developers.google.com/maps/documentation/places/web-service/nearby-search
@@ -320,17 +320,17 @@ After POIs are selected, the app generates a narration for each one using the Ge
 | [geminiService.ts](file:///Users/cucco/Documents/travle-companion/src/services/api/geminiService.ts) | Implement `generateNarration` and `generateAllNarrations` |
 
 #### Acceptance Criteria
-- [ ] `generateNarration(poi: POI, preferences: TripPreferences): Promise<string>`
-  - Builds prompt using `buildNarrationPrompt` from WI-2
-  - Calls Gemini API (Google AI Studio endpoint)
-  - Returns the narration text
-  - Validates word count is within the target range for the selected depth
-- [ ] `generateAllNarrations(pois: POI[], preferences: TripPreferences, onProgress): Promise<POI[]>`
-  - Uses the `RateLimiter` from WI-3 to queue all narration requests
-  - Fires `onProgress(completed, total)` callback for each completed narration
-  - Returns POIs with `narration_text`, `narration_word_count`, and `estimated_listen_minutes` populated
-  - `estimated_listen_minutes = narration_word_count / 150` (avg speaking rate)
-- [ ] Error handling: if a single narration fails after retries, mark it as failed but continue with others
+- [x] `generateNarration(poi: POI, preferences: TripPreferences): Promise<string>`
+  - [x] Builds prompt using `buildNarrationPrompt` from WI-2
+  - [x] Calls Gemini API (Google AI Studio endpoint)
+  - [x] Returns the narration text
+  - [x] Validates word count is within the target range for the selected depth
+- [x] `generateAllNarrations(pois: POI[], preferences: TripPreferences, onProgress): Promise<POI[]>`
+  - [x] Uses the `RateLimiter` from WI-3 to queue all narration requests
+  - [x] Fires `onProgress(completed, total)` callback for each completed narration
+  - [x] Returns POIs with `narration_text`, `narration_word_count`, and `estimated_listen_minutes` populated
+  - [x] `estimated_listen_minutes = narration_word_count / 150` (avg speaking rate)
+- [x] Error handling: if a single narration fails after retries, mark it as failed but continue with others
 
 #### Key References
 - Gemini API: https://ai.google.dev/gemini-api/docs
@@ -354,25 +354,25 @@ After narrations are generated, we pre-generate high-quality audio using Cloud T
 | [ttsService.ts](file:///Users/cucco/Documents/travle-companion/src/services/api/ttsService.ts) | Implement `synthesizeSpeech` and `generateAllAudio` |
 
 #### Acceptance Criteria
-- [ ] `synthesizeSpeech(text: string, language: string): Promise<ArrayBuffer>`
-  - Supports two providers: Google Cloud TTS and ElevenLabs (selected via `TTS_PROVIDER` env var)
-  - Google Cloud TTS: call `texttospeech.googleapis.com/v1/text:synthesize`
-  - ElevenLabs: call `api.elevenlabs.io/v1/text-to-speech/{voice_id}`
-  - Returns raw audio data (MP3 format)
-  - Select a natural-sounding voice appropriate for the language
-- [ ] `generateAllAudio(pois: POI[], tripId: string, language: string, onProgress): Promise<POI[]>`
-  - For each POI, call `synthesizeSpeech` with `narration_text`
-  - Save audio using `fileStorage.saveAudioFile` from WI-4
-  - Update `audio_file_path` on each POI
-  - Fire `onProgress` callback
-  - Use rate limiter if the TTS API has rate limits
-- [ ] `downloadPOIImage(poi: POI, tripId: string): Promise<string>`
-  - Download image from `image_url` (Google Places Photos API)
-  - Save using `fileStorage.saveImageFile` from WI-4
-  - Return the local file path
-- [ ] `downloadAllImages(pois: POI[], tripId: string, onProgress): Promise<POI[]>`
-  - Batch download all POI images, update `image_local_path`
-  - Fire progress callback
+- [x] `synthesizeSpeech(text: string, language: string): Promise<ArrayBuffer>`
+  - [x] Supports two providers: Google Cloud TTS and ElevenLabs (selected via `TTS_PROVIDER` env var)
+  - [x] Google Cloud TTS: call `texttospeech.googleapis.com/v1/text:synthesize`
+  - [x] ElevenLabs: call `api.elevenlabs.io/v1/text-to-speech/{voice_id}`
+  - [x] Returns raw audio data (MP3 format)
+  - [x] Select a natural-sounding voice appropriate for the language
+- [x] `generateAllAudio(pois: POI[], tripId: string, language: string, onProgress): Promise<POI[]>`
+  - [x] For each POI, call `synthesizeSpeech` with `narration_text`
+  - [x] Save audio using `fileStorage.saveAudioFile` from WI-4
+  - [x] Update `audio_file_path` on each POI
+  - [x] Fire `onProgress` callback
+  - [x] Use rate limiter if the TTS API has rate limits
+- [x] `downloadPOIImage(poi: POI, tripId: string): Promise<string>`
+  - [x] Download image from `image_url` (Google Places Photos API)
+  - [x] Save using `fileStorage.saveImageFile` from WI-4
+  - [x] Return the local file path
+- [x] `downloadAllImages(pois: POI[], tripId: string, onProgress): Promise<POI[]>`
+  - [x] Batch download all POI images, update `image_local_path`
+  - [x] Fire progress callback
 
 #### Key References
 - Google Cloud TTS: https://cloud.google.com/text-to-speech/docs
@@ -399,24 +399,24 @@ During active travel, the app tracks the user's GPS location and triggers narrat
 | [useProximityTrigger.ts](file:///Users/cucco/Documents/travle-companion/src/hooks/useProximityTrigger.ts) | React hook wrapping the proximity engine |
 
 #### Acceptance Criteria for `gpsTracker.ts`
-- [ ] Uses `expo-location` for location tracking
-- [ ] Two modes: **low-power** (`Accuracy.Low`, updates every 500m) and **high-accuracy** (`Accuracy.High`, updates every 10m)
-- [ ] Automatically switches between modes based on distance to next POI:
-  - > 8km from next POI → low-power mode
-  - ≤ 8km from next POI → high-accuracy mode
-- [ ] `startTracking(onLocationUpdate: (location) => void): void`
-- [ ] `stopTracking(): void`
-- [ ] Saves GPS breadcrumbs to storage via WI-4 (every 30 seconds)
-- [ ] Works in background (uses Expo's background location task)
+- [x] Uses `expo-location` for location tracking
+- [x] Two modes: **low-power** (`Accuracy.Low`, updates every 500m) and **high-accuracy** (`Accuracy.High`, updates every 10m)
+- [x] Automatically switches between modes based on distance to next POI:
+  - [x] > 8km from next POI → low-power mode
+  - [x] ≤ 8km from next POI → high-accuracy mode
+- [x] `startTracking(onLocationUpdate: (location) => void): void`
+- [x] `stopTracking(): void`
+- [x] Saves GPS breadcrumbs to storage via WI-4 (every 30 seconds)
+- [x] Works in background (uses Expo's background location task)
 
 #### Acceptance Criteria for `proximityEngine.ts`
-- [ ] Takes a sorted list of POIs (by route order) and the current trip mode
-- [ ] Only checks distance to the **next unplayed POI** (not all POIs — performance optimization)
-- [ ] Trigger distances: City Mode = 50m, Route Mode = 3200m (~2 miles)
-- [ ] `checkProximity(currentLocation, pois, mode): POI | null`
-  - Returns the POI to trigger, or null
-  - Marks POI as triggered so it won't re-trigger
-  - Respects cooldown period (2 minutes since last trigger)
+- [x] Takes a sorted list of POIs (by route order) and the current trip mode
+- [x] Only checks distance to the **next unplayed POI** (not all POIs — performance optimization)
+- [x] Trigger distances: City Mode = 50m, Route Mode = 3200m (~2 miles)
+- [x] `checkProximity(currentLocation, pois, mode): POI | null`
+  - [x] Returns the POI to trigger, or null
+  - [x] Marks POI as triggered so it won't re-trigger
+  - [x] Respects cooldown period (2 minutes since last trigger)
 - [ ] Pre-sorts POIs by route order during trip start
 
 #### Key References
@@ -447,28 +447,28 @@ When a POI is triggered, the app plays the pre-generated audio file. If multiple
 | [useNarrationPlayer.ts](file:///Users/cucco/Documents/travle-companion/src/hooks/useNarrationPlayer.ts) | React hook for playback UI state |
 
 #### Acceptance Criteria for `audioPlayer.ts`
-- [ ] `playAudioFile(filePath: string): Promise<void>` — plays a local .mp3 file
-  - Uses `expo-av` Audio API
-  - Reports playback progress (current position / duration)
-  - Supports pause/resume/stop
-- [ ] `playTTSFallback(text: string, language: string): Promise<void>` — uses `expo-speech` for device TTS
-  - Used only when `audio_file_path` is null or file is missing
-- [ ] `getCurrentPlaybackState(): PlaybackState` — returns 'playing', 'paused', 'stopped', 'loading'
+- [x] `playAudioFile(filePath: string): Promise<void>` — plays a local .mp3 file
+  - [x] Uses `expo-av` Audio API
+  - [x] Reports playback progress (current position / duration)
+  - [x] Supports pause/resume/stop
+- [x] `playTTSFallback(text: string, language: string): Promise<void>` — uses `expo-speech` for device TTS
+  - [x] Used only when `audio_file_path` is null or file is missing
+- [x] `getCurrentPlaybackState(): PlaybackState` — returns 'playing', 'paused', 'stopped', 'loading'
 
 #### Acceptance Criteria for `narrationQueue.ts`
-- [ ] FIFO queue: `enqueue(poi: POI): void`
-- [ ] Auto-plays next item when current finishes
-- [ ] Plays an audio chime between narrations: *"Coming up next: {POI name}"*
-- [ ] `skip(): void` — skip current narration, play next in queue
-- [ ] `pause(): void` / `resume(): void`
-- [ ] Cooldown: ignores new triggers within 2 minutes of last trigger start (configurable via config)
-- [ ] `onNarrationStart` and `onNarrationEnd` callbacks for UI updates (show POI card)
+- [x] FIFO queue: `enqueue(poi: POI): void`
+- [x] Auto-plays next item when current finishes
+- [x] Plays an audio chime between narrations: *"Coming up next: {POI name}"*
+- [x] `skip(): void` — skip current narration, play next in queue
+- [x] `pause(): void` / `resume(): void`
+- [x] Cooldown: ignores new triggers within 2 minutes of last trigger start (configurable via config)
+- [x] `onNarrationStart` and `onNarrationEnd` callbacks for UI updates (show POI card)
 
 #### Acceptance Criteria for `audioDucking.ts`
-- [ ] On iOS: configure `AVAudioSession` category to `.playback` with `.duckOthers` option
-- [ ] On Android: request `AudioFocus` with `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`
-- [ ] When other audio (e.g., nav instructions) plays, our narration volume lowers automatically
-- [ ] Configurable via settings: "Pause on navigation" toggle
+- [x] On iOS: configure `AVAudioSession` category to `.playback` with `.duckOthers` option
+- [x] On Android: request `AudioFocus` with `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`
+- [x] When other audio (e.g., nav instructions) plays, our narration volume lowers automatically
+- [x] Configurable via settings: "Pause on navigation" toggle
 
 #### Key References
 - expo-av: https://docs.expo.dev/versions/latest/sdk/av/

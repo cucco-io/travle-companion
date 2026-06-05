@@ -15,6 +15,8 @@
  */
 
 import * as Location from 'expo-location';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore – expo-task-manager ships no bundled type declarations
 import * as TaskManager from 'expo-task-manager';
 import { CONFIG } from '../../constants/config';
 import { GpsBreadcrumb } from '../../types/trip';
@@ -46,7 +48,7 @@ let isTrackingActive = false;
 let currentTripId: string | null = null;
 let lastBreadcrumbTime = 0;
 
-TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: { data: unknown; error: unknown }) => {
   if (error) {
     console.error('Background location task error:', error);
     return;
