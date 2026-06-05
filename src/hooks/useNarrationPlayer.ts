@@ -1,20 +1,8 @@
-/**
- * src/hooks/useNarrationPlayer.ts
- *
- * React hook for narration playback control.
- * Provides a React-friendly interface to the narration queue
- * and audio player services.
- *
- * Dependencies:
- * - src/services/audio/audioPlayer.ts
- * - src/services/audio/narrationQueue.ts
- * - src/services/audio/audioDucking.ts
- * - src/types/poi.ts (POI)
- * - React (useState, useEffect, useCallback, useRef)
- */
-
+import { useState, useEffect, useRef } from 'react';
 import { POI } from '../types/poi';
-import { PlaybackStatus } from '../services/audio/audioPlayer';
+import { PlaybackStatus, configureAudioSession, releaseAudioResources } from '../services/audio/audioPlayer';
+import { createNarrationQueue } from '../services/audio/narrationQueue';
+import { setDuckingMode } from '../services/audio/audioDucking';
 import { TripLogEntry } from '../types/trip';
 
 /**
@@ -41,39 +29,8 @@ export interface NarrationPlayerState {
  * Hook for controlling narration playback during an active trip.
  *
  * @returns Object with player state and control functions
- *
- * Usage:
- * ```tsx
- * const {
- *   currentPOI,
- *   playbackStatus,
- *   queueLength,
- *   enqueue,
- *   skip,
- *   pause,
- *   resume,
- *   replay,
- *   stop,
- * } = useNarrationPlayer();
- *
- * // Proximity engine triggers a POI
- * enqueue(triggeredPOI);
- * ```
- *
- * Implementation notes:
- * - Create a narrationQueue instance on mount (via useRef)
- * - Subscribe to queue state changes to update React state
- * - Configure audio session on mount (configureAudioSession)
- * - Set audio ducking mode on mount (setDuckingMode)
- * - Clean up on unmount (stop queue, release audio resources)
- * - enqueue: add a POI to the narration queue
- * - skip: skip current narration, log as skipped
- * - pause/resume: toggle playback
- * - replay: restart current narration
- * - stop: clear queue and stop everything
- * - Expose playbackLog for post-trip review
  */
-export function useNarrationPlayer(): NarrationPlayerState & {
+export function useNarrationPlayer(pauseOnNavigation: boolean = false): NarrationPlayerState & {
   enqueue: (poi: POI) => void;
   skip: () => void;
   pause: () => void;
@@ -81,11 +38,102 @@ export function useNarrationPlayer(): NarrationPlayerState & {
   replay: () => void;
   stop: () => void;
 } {
-  // TODO: Implement narration player hook
-  // 1. Initialize narration queue via useRef
-  // 2. Set up state subscriptions
-  // 3. Configure audio session and ducking
-  // 4. Implement control functions
-  // 5. Clean up on unmount
-  throw new Error('Not implemented');
+  const [currentPOI, setCurrentPOI] = useState<POI | null>(null);
+  const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus>('idle');
+  const [queueLength, setQueueLength] = useState<number>(0);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [playbackLog, setPlaybackLog] = useState<TripLogEntry[]>([]);
+
+  // Use any to represent the returned narration queue interface
+  const queueRef = useRef<ReturnType<typeof createNarrationQueue> | null>(null);
+
+  useEffect(() => {
+    const queueInstance = createNarrationQueue((state) => {
+      setCurrentPOI(state.currentPOI);
+      setPlaybackStatus(state.playbackStatus);
+      setQueueLength(state.queue.length);
+      setIsPaused(state.isPaused);
+      setPlaybackLog(state.log);
+    });
+
+    queueRef.current = queueInstance;
+
+    // Synchronize initial state
+    const initialState = queueInstance.getState();
+    setCurrentPOI(initialState.currentPOI);
+    setPlaybackStatus(initialState.playbackStatus);
+    setQueueLength(initialState.queue.length);
+    setIsPaused(initialState.isPaused);
+    setPlaybackLog(initialState.log);
+
+    return () => {
+      if (queueRef.current) {
+        queueRef.current.stop();
+      }
+      releaseAudioResources().catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    const initAudio = async () => {
+      try {
+        await configureAudioSession();
+        const mode = pauseOnNavigation ? 'pause' : 'duck';
+        await setDuckingMode(mode);
+      } catch (e) {
+        // ignore
+      }
+    };
+    initAudio();
+  }, [pauseOnNavigation]);
+
+  const enqueue = (poi: POI) => {
+    if (queueRef.current) {
+      queueRef.current.enqueue(poi);
+    }
+  };
+
+  const skip = () => {
+    if (queueRef.current) {
+      queueRef.current.skip();
+    }
+  };
+
+  const pause = () => {
+    if (queueRef.current) {
+      queueRef.current.pause();
+    }
+  };
+
+  const resume = () => {
+    if (queueRef.current) {
+      queueRef.current.resume();
+    }
+  };
+
+  const replay = () => {
+    if (queueRef.current) {
+      queueRef.current.replay();
+    }
+  };
+
+  const stop = () => {
+    if (queueRef.current) {
+      queueRef.current.stop();
+    }
+  };
+
+  return {
+    currentPOI,
+    playbackStatus,
+    queueLength,
+    isPaused,
+    playbackLog,
+    enqueue,
+    skip,
+    pause,
+    resume,
+    replay,
+    stop,
+  };
 }
