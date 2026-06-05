@@ -2,15 +2,20 @@
  * src/services/api/ttsService.ts
  *
  * Cloud Text-to-Speech API integration layer.
- * Converts narration text into audio files (.mp3) for offline playback.
- * Supports Google Cloud TTS and ElevenLabs as providers.
+ * Converts narration text into audio files for offline playback.
+ * Supports three providers:
+ *   - 'gemini'     — Google AI Studio Gemini TTS (default, uses GEMINI_API_KEY)
+ *   - 'google'     — Google Cloud TTS (requires TTS_API_KEY or GOOGLE_TTS_API_KEY)
+ *   - 'elevenlabs' — ElevenLabs (requires ELEVENLABS_API_KEY)
  *
  * Dependencies:
- * - TTS_API_KEY and TTS_PROVIDER environment variables
+ * - GEMINI_API_KEY (for gemini provider)
+ * - TTS_API_KEY / GOOGLE_TTS_API_KEY / ELEVENLABS_API_KEY env vars (for other providers)
  * - src/types/api.ts (TTSRequest, TTSResponse)
  * - expo-file-system (for saving audio files to local storage)
  *
  * API References:
+ * - Gemini TTS: https://ai.google.dev/gemini-api/docs/speech-generation
  * - Google Cloud TTS: https://cloud.google.com/text-to-speech/docs
  * - ElevenLabs: https://elevenlabs.io/docs/api-reference
  */
@@ -56,15 +61,39 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 /**
  * Returns the default voice ID/name for a given language and provider.
  *
+ * For 'gemini': returns one of the 30+ prebuilt, language-flexible voice names
+ * (Aoede, Kore, Puck, Charon, Fenrir, Zephyr, etc.).
+ * These voices are language-flexible — the same voice name works across locales.
+ *
+ * For 'google': returns a Neural2 voice name for Google Cloud TTS.
+ * For 'elevenlabs': returns the configured voice ID.
+ *
  * @param languageCode - BCP 47 language code (e.g., 'en-US', 'it-IT', 'fr-FR')
- * @param provider - TTS provider ('google' or 'elevenlabs')
+ * @param provider - TTS provider ('gemini', 'google', or 'elevenlabs')
  * @returns A voice ID or name string appropriate for the provider
  */
 export function getDefaultVoice(
   languageCode: string,
-  provider: 'google' | 'elevenlabs'
+  provider: 'gemini' | 'google' | 'elevenlabs'
 ): string {
-  if (provider === 'google') {
+  if (provider === 'gemini') {
+    // Gemini voices are language-flexible; we pick voices that tend to suit
+    // the warmth and clarity needed for travel narration.
+    const code = languageCode.toLowerCase();
+    if (code.startsWith('en')) return 'Aoede';       // warm, clear female
+    if (code.startsWith('it')) return 'Kore';        // expressive female
+    if (code.startsWith('fr')) return 'Zephyr';      // elegant female
+    if (code.startsWith('es')) return 'Leda';        // clear female
+    if (code.startsWith('de')) return 'Fenrir';      // authoritative male
+    if (code.startsWith('ja')) return 'Puck';        // energetic
+    if (code.startsWith('zh')) return 'Charon';      // measured male
+    if (code.startsWith('pt')) return 'Sulafat';     // warm female
+    if (code.startsWith('ko')) return 'Enceladus';   // clear male
+    if (code.startsWith('nl')) return 'Autonoe';     // bright female
+    if (code.startsWith('pl')) return 'Rasalgethi';  // clear male
+    if (code.startsWith('ru')) return 'Iapetus';     // resonant male
+    return 'Aoede'; // default: warm, clear female
+  } else if (provider === 'google') {
     const code = languageCode.toLowerCase();
     if (code.startsWith('en')) return 'en-US-Neural2-F';
     if (code.startsWith('it')) return 'it-IT-Neural2-C';
@@ -82,6 +111,154 @@ export function getDefaultVoice(
 }
 
 /**
+ * Builds a WAV file header and prepends it to raw PCM audio data.
+ *
+ * Gemini TTS returns raw 16-bit signed PCM at 24000 Hz (mono).
+ * Most audio players require a WAV container; this helper adds the 44-byte
+ * RIFF/WAV header so the audio can be played back or saved as a .wav file.
+ *
+ * @param pcmBuffer - Raw PCM audio bytes
+ * @param sampleRate - Audio sample rate in Hz (default 24000)
+ * @param numChannels - Number of audio channels (default 1 = mono)
+ * @param bitsPerSample - Bits per sample (default 16)
+ * @returns ArrayBuffer containing a valid WAV file
+ */
+function pcmToWav(
+  pcmBuffer: ArrayBuffer,
+  sampleRate: number = 24000,
+  numChannels: number = 1,
+  bitsPerSample: number = 16
+): ArrayBuffer {
+  const pcmData = new Uint8Array(pcmBuffer);
+  const pcmLength = pcmData.byteLength;
+  // WAV header is 44 bytes
+  const wavBuffer = new ArrayBuffer(44 + pcmLength);
+  const view = new DataView(wavBuffer);
+
+  const writeString = (offset: number, str: string): void => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
+  const blockAlign = (numChannels * bitsPerSample) / 8;
+
+  writeString(0, 'RIFF');                          // ChunkID
+  view.setUint32(4, 36 + pcmLength, true);         // ChunkSize
+  writeString(8, 'WAVE');                          // Format
+  writeString(12, 'fmt ');                         // Subchunk1ID
+  view.setUint32(16, 16, true);                    // Subchunk1Size (PCM = 16)
+  view.setUint16(20, 1, true);                     // AudioFormat (1 = PCM)
+  view.setUint16(22, numChannels, true);           // NumChannels
+  view.setUint32(24, sampleRate, true);            // SampleRate
+  view.setUint32(28, byteRate, true);              // ByteRate
+  view.setUint16(32, blockAlign, true);            // BlockAlign
+  view.setUint16(34, bitsPerSample, true);         // BitsPerSample
+  writeString(36, 'data');                         // Subchunk2ID
+  view.setUint32(40, pcmLength, true);             // Subchunk2Size
+
+  // Copy PCM bytes after the header
+  new Uint8Array(wavBuffer).set(pcmData, 44);
+
+  return wavBuffer;
+}
+
+/**
+ * Synthesizes speech from text using Google AI Studio's Gemini TTS model.
+ *
+ * Uses the same GEMINI_API_KEY as the rest of the app — no extra key required.
+ * Returns a WAV ArrayBuffer (PCM audio wrapped in RIFF/WAV container).
+ *
+ * Model: gemini-2.5-flash-preview-tts
+ * Audio format: 16-bit PCM @ 24 kHz, mono → wrapped in WAV header
+ *
+ * @param text - The narration text to convert to speech
+ * @param language - BCP 47 language code (e.g., 'en-US', 'it-IT')
+ * @returns WAV audio as ArrayBuffer
+ * @throws Error if API key is missing or synthesis fails
+ */
+export async function synthesizeSpeechWithGemini(
+  text: string,
+  language: string
+): Promise<ArrayBuffer> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'Gemini API key (GEMINI_API_KEY) is not configured. ' +
+      'Get one free at https://aistudio.google.com/app/apikey'
+    );
+  }
+
+  const voiceName = getDefaultVoice(language, 'gemini');
+  const model = 'gemini-2.5-flash-preview-tts';
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const requestBody = {
+    contents: [
+      {
+        parts: [{ text }],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName,
+          },
+        },
+      },
+    },
+  };
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Gemini TTS API error: ${response.status} ${response.statusText} - ${errorText}`
+    );
+  }
+
+  const data = (await response.json()) as {
+    candidates: Array<{
+      content: {
+        parts: Array<{
+          inlineData?: { mimeType: string; data: string };
+        }>;
+      };
+    }>;
+  };
+
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    throw new Error('Gemini TTS API returned no candidates.');
+  }
+
+  const audioPart = candidate.content.parts.find(
+    (p) => p.inlineData?.mimeType?.startsWith('audio/')
+  );
+
+  if (!audioPart?.inlineData?.data) {
+    throw new Error(
+      'Gemini TTS API response did not contain audio data. ' +
+      `Response: ${JSON.stringify(data).substring(0, 500)}`
+    );
+  }
+
+  const pcmBuffer = base64ToArrayBuffer(audioPart.inlineData.data);
+
+  // Gemini returns raw PCM (16-bit, 24 kHz, mono). Wrap in WAV container.
+  return pcmToWav(pcmBuffer);
+}
+
+/**
  * Synthesizes speech from text using the configured TTS provider.
  *
  * @param text - The narration text to convert to speech
@@ -94,7 +271,12 @@ export async function synthesizeSpeech(
   text: string,
   language: string
 ): Promise<ArrayBuffer> {
-  const provider = process.env.TTS_PROVIDER || 'google';
+  // Default to 'gemini' — reuses GEMINI_API_KEY, no extra TTS key needed.
+  const provider = process.env.TTS_PROVIDER || 'gemini';
+
+  if (provider === 'gemini') {
+    return synthesizeSpeechWithGemini(text, language);
+  }
 
   if (provider === 'google') {
     const apiKey = process.env.GOOGLE_TTS_API_KEY || process.env.TTS_API_KEY;
