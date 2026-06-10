@@ -1,11 +1,11 @@
-import { POI } from '../../types/poi';
-import { TripPreferences, TripMode } from '../../types/trip';
+import { CONFIG } from '../../constants/config';
 import {
   GeminiCurationResponse,
 } from '../../types/api';
+import { POI } from '../../types/poi';
+import { TripMode, TripPreferences } from '../../types/trip';
 import { buildNarrationPrompt, getWordCountRange } from '../../utils/promptBuilder';
 import { RateLimiter } from '../rateLimiter';
-import { CONFIG } from '../../constants/config';
 
 /**
  * Sends a prompt to the Gemini API and returns the raw text response.
@@ -36,7 +36,7 @@ export async function callGemini(
     throw new Error('GEMINI_API_KEY environment variable is not set');
   }
 
-  const model = options?.model || 'gemini-2.0-flash';
+  const model = options?.model || 'gemini-3.1-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const requestBody = {
