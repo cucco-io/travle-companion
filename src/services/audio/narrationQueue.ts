@@ -11,6 +11,7 @@ import {
 } from './audioPlayer';
 import * as Speech from 'expo-speech';
 import * as FileSystem from 'expo-file-system/legacy';
+import { loadSettings } from '../storage/settingsStorage';
 import { CONFIG } from '../../constants/config';
 
 /**
@@ -122,7 +123,8 @@ export function createNarrationQueue(
         }
       };
 
-      if (poi.audio_file_path) {
+      const settings = await loadSettings();
+      if (settings.ttsProvider === 'gemini' && poi.audio_file_path) {
         try {
           const info = await FileSystem.getInfoAsync(poi.audio_file_path);
           if (info.exists) {

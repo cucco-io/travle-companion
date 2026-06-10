@@ -33,10 +33,12 @@ import {
   Platform,
   StatusBar,
   Easing,
+  Alert,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTripPreparation, PreparationStage } from '@/src/hooks/useTripPreparation';
 import { TripPreferences, TripMode, InterestCategory, NarrationDepth } from '@/src/types/trip';
+import { deleteTrip } from '@/src/services/storage/tripStorage';
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
 const COLORS = {
@@ -221,6 +223,7 @@ export default function TripPrepareScreen() {
     tripName?: string;
     destinationName?: string;
     originName?: string;
+    tripId?: string;
   }>();
 
   const {
@@ -234,19 +237,56 @@ export default function TripPrepareScreen() {
     startPreparation,
     cancelPreparation,
     retryPreparation,
-  } = useTripPreparation();
+  } = useTripPreparation(params.tripId);
 
   // ── Derived route params ──────────────────────────────────────────────────
-  const tripMode: TripMode = params.mode === 'route' ? 'route' : 'city';
-  const tripName = params.tripName ?? 'My Trip';
-  const destinationName = params.destinationName ?? 'Unknown';
-  const originName = params.originName ?? '';
+  const tripMode: TripMode = params.mode === 'route' || (trip && trip.mode === 'route') ? 'route' : 'city';
+  const tripName = params.tripName ?? (trip ? trip.name : 'My Trip');
+  const destinationName = params.destinationName ?? (trip ? trip.destination.name : 'Unknown');
+  const originName = params.originName ?? (trip && trip.origin ? trip.origin.name : '');
 
   // ── Preferences state ─────────────────────────────────────────────────────
   const [interests, setInterests] = useState<InterestCategory[]>(['history', 'architecture']);
   const [narrationDepth, setNarrationDepth] = useState<NarrationDepth>('standard');
   const [kidFriendly, setKidFriendly] = useState(false);
   const [language, setLanguage] = useState('en');
+
+  // Load preferences from existing trip if editing/resuming
+  useEffect(() => {
+    if (trip && trip.preferences) {
+      setInterests(trip.preferences.interests);
+      setNarrationDepth(trip.preferences.narration_depth);
+      setKidFriendly(trip.preferences.kid_friendly);
+      setLanguage(trip.preferences.language);
+    }
+  }, [trip]);
+
+  // ── Interrupted research state ────────────────────────────────────────────
+  const [isEditingPreferences, setIsEditingPreferences] = useState(false);
+  const isInterrupted = trip !== null && trip.status === 'preparing' && stage === 'idle' && statusMessage === 'Interrupted';
+
+  const handleDeleteResearch = useCallback(() => {
+    if (!trip) return;
+    Alert.alert(
+      'Delete Trip?',
+      `"${trip.name}" and all its partial data will be permanently deleted.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteTrip(trip.id);
+              router.back();
+            } catch {
+              Alert.alert('Error', 'Could not delete the trip.');
+            }
+          },
+        },
+      ]
+    );
+  }, [trip, router]);
 
   // ── Phase state ──────────────────────────────────────────────────────────
   const isPipelinePhase = stage !== 'idle' && stage !== 'error';
@@ -403,9 +443,54 @@ export default function TripPrepareScreen() {
           </View>
 
           {/* ══════════════════════════════════════════════════════════════
+              Research Interrupted View
+              ══════════════════════════════════════════════════════════════ */}
+          {isInterrupted && !isEditingPreferences && (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorEmoji}>⚠️</Text>
+              <Text style={styles.errorTitle}>Research Interrupted</Text>
+              <Text style={styles.errorMessage}>
+                The preparation for this trip was stopped or failed previously. You can resume researching, modify your preferences, or delete this trip.
+              </Text>
+              
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={retryPreparation}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.primaryButtonText}>🔄 Resume Research</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.retryButton, { backgroundColor: COLORS.navyLight, borderColor: COLORS.whiteAlpha20, borderWidth: 1, marginTop: 10 }]}
+                onPress={() => setIsEditingPreferences(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.retryButtonText}>✏️ Edit Preferences</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.retryButton, { backgroundColor: COLORS.error, marginTop: 10 }]}
+                onPress={handleDeleteResearch}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.retryButtonText}>🗑 Delete Trip</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => router.back()}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.cancelButtonText}>Go Back</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════
               PHASE 1: Preferences Form
               ══════════════════════════════════════════════════════════════ */}
-          {!isPipelinePhase && !isError && (
+          {!isPipelinePhase && !isError && (!isInterrupted || isEditingPreferences) && (
             <Animated.View style={{ opacity: formFadeAnim }}>
               {/* Interest categories */}
               <View style={styles.section}>
@@ -563,6 +648,17 @@ export default function TripPrepareScreen() {
                     activeOpacity={0.85}
                   >
                     <Text style={styles.primaryButtonText}>🗺️ Start Trip</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.primaryButton, { backgroundColor: COLORS.teal, marginTop: 12 }]}
+                    onPress={() => {
+                      if (trip) {
+                        router.push(`/trip/preview?tripId=${trip.id}`);
+                      }
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.primaryButtonText, { color: COLORS.white }]}>📚 Preview Research</Text>
                   </TouchableOpacity>
                 </Animated.View>
               )}

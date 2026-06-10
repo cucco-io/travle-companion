@@ -1,6 +1,6 @@
-import { callGemini, generateNarration, generateAllNarrations } from '../geminiService';
 import { POI } from '../../../types/poi';
 import { TripPreferences } from '../../../types/trip';
+import { callGemini, generateAllNarrations, generateNarration } from '../geminiService';
 
 describe('geminiService', () => {
   const originalEnv = process.env;
@@ -65,7 +65,7 @@ describe('geminiService', () => {
       const result = await callGemini(prompt, { temperature: 0.7 });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=test-key',
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=test-key',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

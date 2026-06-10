@@ -21,8 +21,8 @@
  */
 
 import { POI } from '../../types/poi';
-import { saveAudioFile, saveImageFile, saveBase64File } from '../storage/fileStorage';
 import { RateLimiter } from '../rateLimiter';
+import { saveAudioFile, saveBase64File, saveImageFile } from '../storage/fileStorage';
 
 declare const Buffer: any;
 
@@ -191,7 +191,7 @@ export async function synthesizeSpeechWithGemini(
   }
 
   const voiceName = getDefaultVoice(language, 'gemini');
-  const model = 'gemini-2.5-flash-preview-tts';
+  const model = 'gemini-3.1-flash-tts-preview';
   const endpoint =
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
