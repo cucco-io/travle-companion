@@ -23,10 +23,10 @@ import { useState, useCallback, useRef } from 'react';
 import { Trip, TripPreferences, TripMode } from '../types/trip';
 import { POI } from '../types/poi';
 import { fetchRoute, getRouteSearchPoints } from '../services/api/directionsService';
-import { fetchNearbyPOIs, fetchPOIsAlongRoute, curatePOIs } from '../services/api/placesService';
+import { fetchNearbyPOIs, fetchPOIsAlongRoute, curatePOIs, geocodeAddress } from '../services/api/placesService';
 import { generateAllNarrations } from '../services/api/geminiService';
 import { generateAllAudio, downloadAllImages } from '../services/api/ttsService';
-import { createTrip, savePOIs, updateTripStatus } from '../services/storage/tripStorage';
+import { createTrip, savePOIs, updateTripStatus, updateTripCoordinates } from '../services/storage/tripStorage';
 import { CONFIG } from '../constants/config';
 
 /**
@@ -146,6 +146,62 @@ export function useTripPreparation(): PreparationState & {
       throwIfCancelled();
 
       // -----------------------------------------------------------------------
+      // Step 1.5 — Resolve coordinates for origin and/or destination if they are 0
+      // -----------------------------------------------------------------------
+      let destinationLat = params.destination.lat;
+      let destinationLng = params.destination.lng;
+      let originLat = params.origin?.lat ?? 0;
+      let originLng = params.origin?.lng ?? 0;
+
+      if (params.mode === 'city' && destinationLat === 0 && destinationLng === 0) {
+        setStatusMessage('Resolving destination coordinates...');
+        const coords = await geocodeAddress(params.destination.name);
+        destinationLat = coords.lat;
+        destinationLng = coords.lng;
+        newTrip.destination = {
+          ...newTrip.destination,
+          lat: destinationLat,
+          lng: destinationLng,
+        };
+        setTrip({ ...newTrip });
+        await updateTripCoordinates(tripId, null, newTrip.destination);
+        throwIfCancelled();
+      } else if (params.mode === 'route') {
+        setStatusMessage('Resolving route coordinates...');
+        let originUpdated = false;
+        let destUpdated = false;
+
+        if (originLat === 0 && originLng === 0 && params.origin) {
+          const coords = await geocodeAddress(params.origin.name);
+          originLat = coords.lat;
+          originLng = coords.lng;
+          newTrip.origin = {
+            ...newTrip.origin!,
+            lat: originLat,
+            lng: originLng,
+          };
+          originUpdated = true;
+        }
+        if (destinationLat === 0 && destinationLng === 0) {
+          const coords = await geocodeAddress(params.destination.name);
+          destinationLat = coords.lat;
+          destinationLng = coords.lng;
+          newTrip.destination = {
+            ...newTrip.destination,
+            lat: destinationLat,
+            lng: destinationLng,
+          };
+          destUpdated = true;
+        }
+
+        if (originUpdated || destUpdated) {
+          setTrip({ ...newTrip });
+          await updateTripCoordinates(tripId, newTrip.origin, newTrip.destination);
+        }
+        throwIfCancelled();
+      }
+
+      // -----------------------------------------------------------------------
       // Step 2 — Route mode: fetch directions & polyline
       // -----------------------------------------------------------------------
       let routePolyline: string | null = null;
@@ -156,8 +212,8 @@ export function useTripPreparation(): PreparationState & {
         setProgress(0.05);
         setStatusMessage('Plotting route...');
 
-        const originStr = `${params.origin.lat},${params.origin.lng}`;
-        const destStr = `${params.destination.lat},${params.destination.lng}`;
+        const originStr = `${originLat},${originLng}`;
+        const destStr = `${destinationLat},${destinationLng}`;
         const routeResult = await fetchRoute(originStr, destStr);
         routePolyline = routeResult.encodedPolyline;
         newTrip.route_polyline = routePolyline;
@@ -180,8 +236,8 @@ export function useTripPreparation(): PreparationState & {
         rawPOIs = await fetchPOIsAlongRoute(searchPoints, interests);
       } else {
         rawPOIs = await fetchNearbyPOIs(
-          params.destination.lat,
-          params.destination.lng,
+          destinationLat,
+          destinationLng,
           CONFIG.API.PLACES_SEARCH_RADIUS_METERS,
           interests
         );

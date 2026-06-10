@@ -417,6 +417,24 @@ export async function updateTripStatus(
 }
 
 /**
+ * Updates a trip's origin and destination coordinates in the database.
+ * Used during preparation when text addresses/city names are resolved to coordinates.
+ */
+export async function updateTripCoordinates(
+  tripId: string,
+  origin: { name: string; lat: number; lng: number } | null,
+  destination: { name: string; lat: number; lng: number }
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE trips SET origin = ?, destination = ? WHERE id = ?`,
+    origin ? JSON.stringify(origin) : null,
+    JSON.stringify(destination),
+    tripId
+  );
+}
+
+/**
  * Saves POIs for a trip (bulk insert).
  *
  * @param tripId - The trip these POIs belong to

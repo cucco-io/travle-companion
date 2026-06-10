@@ -106,7 +106,7 @@ export function getDefaultVoice(
     }
     return `${languageCode}-${languageCode.toUpperCase()}-Wavenet-A`;
   } else {
-    return process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+    return process.env.ELEVENLABS_VOICE_ID || process.env.EXPO_PUBLIC_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
   }
 }
 
@@ -182,7 +182,7 @@ export async function synthesizeSpeechWithGemini(
   text: string,
   language: string
 ): Promise<ArrayBuffer> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.EXPO_PUBLIC_GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
       'Gemini API key (GEMINI_API_KEY) is not configured. ' +
@@ -272,14 +272,14 @@ export async function synthesizeSpeech(
   language: string
 ): Promise<ArrayBuffer> {
   // Default to 'gemini' — reuses GEMINI_API_KEY, no extra TTS key needed.
-  const provider = process.env.TTS_PROVIDER || 'gemini';
+  const provider = process.env.TTS_PROVIDER || process.env.EXPO_PUBLIC_TTS_PROVIDER || 'gemini';
 
   if (provider === 'gemini') {
     return synthesizeSpeechWithGemini(text, language);
   }
 
   if (provider === 'google') {
-    const apiKey = process.env.GOOGLE_TTS_API_KEY || process.env.TTS_API_KEY;
+    const apiKey = process.env.GOOGLE_TTS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_TTS_API_KEY || process.env.TTS_API_KEY || process.env.EXPO_PUBLIC_TTS_API_KEY;
     if (!apiKey) {
       throw new Error('Google Cloud TTS API key is not configured.');
     }
@@ -315,11 +315,11 @@ export async function synthesizeSpeech(
 
     return base64ToArrayBuffer(data.audioContent);
   } else if (provider === 'elevenlabs') {
-    const apiKey = process.env.ELEVENLABS_API_KEY || process.env.TTS_API_KEY;
+    const apiKey = process.env.ELEVENLABS_API_KEY || process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY || process.env.TTS_API_KEY || process.env.EXPO_PUBLIC_TTS_API_KEY;
     if (!apiKey) {
       throw new Error('ElevenLabs API key is not configured.');
     }
-    const voiceId = process.env.ELEVENLABS_VOICE_ID;
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || process.env.EXPO_PUBLIC_ELEVENLABS_VOICE_ID;
     if (!voiceId) {
       throw new Error('ElevenLabs voice ID is not configured (ELEVENLABS_VOICE_ID).');
     }

@@ -22,22 +22,27 @@ describe('directionsService', () => {
   });
 
   describe('fetchDirections', () => {
-    const mockRoute: DirectionsRoute = {
+    const mockRouteResponse = {
+      duration: '900s',
+      distanceMeters: 10000,
+      polyline: { encodedPolyline: 'abc123polyline' }
+    };
+
+    const expectedRoute: DirectionsRoute = {
       overview_polyline: { points: 'abc123polyline' },
       legs: [
         {
-          distance: { text: '10 km', value: 10000 },
+          distance: { text: '10.0 km', value: 10000 },
           duration: { text: '15 mins', value: 900 },
-          start_address: 'Start Address',
-          end_address: 'End Address',
+          start_address: '',
+          end_address: '',
         },
       ],
     };
 
     test('should fetch directions successfully and return first route', async () => {
       const mockResponse = {
-        status: 'OK',
-        routes: [mockRoute],
+        routes: [mockRouteResponse],
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -47,9 +52,18 @@ describe('directionsService', () => {
 
       const route = await fetchDirections(41.89, 12.49, 43.77, 11.25);
 
-      expect(route).toEqual(mockRoute);
+      expect(route).toEqual(expectedRoute);
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://maps.googleapis.com/maps/api/directions/json?origin=41.89,12.49&destination=43.77,11.25&mode=driving&alternatives=false&key=mocked-api-key'
+        'https://routes.googleapis.com/directions/v2:computeRoutes',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': 'mocked-api-key',
+            'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+          }),
+          body: expect.stringContaining('"latitude":41.89'),
+        })
       );
     });
 
@@ -72,41 +86,8 @@ describe('directionsService', () => {
       );
     });
 
-    test('should throw error on API error response (e.g., ZERO_RESULTS)', async () => {
+    test('should throw error if routes array is empty', async () => {
       const mockResponse = {
-        status: 'ZERO_RESULTS',
-        routes: [],
-      };
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      });
-
-      await expect(fetchDirections(41.89, 12.49, 43.77, 11.25)).rejects.toThrow(
-        'Directions API error: ZERO_RESULTS'
-      );
-    });
-
-    test('should throw error on API error response (e.g., NOT_FOUND)', async () => {
-      const mockResponse = {
-        status: 'NOT_FOUND',
-        routes: [],
-      };
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      });
-
-      await expect(fetchDirections(41.89, 12.49, 43.77, 11.25)).rejects.toThrow(
-        'Directions API error: NOT_FOUND'
-      );
-    });
-
-    test('should throw error if status is OK but routes array is empty', async () => {
-      const mockResponse = {
-        status: 'OK',
         routes: [],
       };
 
@@ -205,22 +186,15 @@ describe('directionsService', () => {
   });
 
   describe('fetchRoute', () => {
-    const mockRoute: DirectionsRoute = {
-      overview_polyline: { points: 'abc123polyline' },
-      legs: [
-        {
-          distance: { text: '10 km', value: 10000 },
-          duration: { text: '15 mins', value: 900 },
-          start_address: 'Start Address',
-          end_address: 'End Address',
-        },
-      ],
+    const mockRouteResponse = {
+      duration: '900s',
+      distanceMeters: 10000,
+      polyline: { encodedPolyline: 'abc123polyline' }
     };
 
     test('should fetch route successfully and return summarized metrics', async () => {
       const mockResponse = {
-        status: 'OK',
-        routes: [mockRoute],
+        routes: [mockRouteResponse],
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -236,7 +210,16 @@ describe('directionsService', () => {
         durationSeconds: 900,
       });
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://maps.googleapis.com/maps/api/directions/json?origin=Rome&destination=Florence&mode=driving&alternatives=false&key=mocked-api-key'
+        'https://routes.googleapis.com/directions/v2:computeRoutes',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': 'mocked-api-key',
+            'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+          }),
+          body: expect.stringContaining('"address":"Rome"'),
+        })
       );
     });
 
@@ -259,25 +242,8 @@ describe('directionsService', () => {
       );
     });
 
-    test('should throw error on API error response (e.g., ZERO_RESULTS)', async () => {
+    test('should throw error if routes array is empty', async () => {
       const mockResponse = {
-        status: 'ZERO_RESULTS',
-        routes: [],
-      };
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      });
-
-      await expect(fetchRoute('Rome', 'Florence')).rejects.toThrow(
-        'Directions API error: ZERO_RESULTS'
-      );
-    });
-
-    test('should throw error if status is OK but routes array is empty', async () => {
-      const mockResponse = {
-        status: 'OK',
         routes: [],
       };
 

@@ -1,4 +1,20 @@
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+// Dynamically load expo-av to prevent runtime crash in environments where the native ExponentAV module is missing
+let Audio: any = null;
+let InterruptionModeIOS: any = { MixWithOthers: 0, DoNotMix: 1, DuckOthers: 2 };
+let InterruptionModeAndroid: any = { MixWithOthers: 0, DoNotMix: 1, DuckOthers: 2 };
+
+try {
+  const ExpoAV = require('expo-av');
+  Audio = ExpoAV.Audio;
+  if (ExpoAV.InterruptionModeIOS) {
+    InterruptionModeIOS = ExpoAV.InterruptionModeIOS;
+  }
+  if (ExpoAV.InterruptionModeAndroid) {
+    InterruptionModeAndroid = ExpoAV.InterruptionModeAndroid;
+  }
+} catch (error) {
+  console.warn('[audioDucking] expo-av is not available in this environment. Audio ducking will be disabled.', error);
+}
 
 /**
  * Audio ducking mode.
@@ -14,8 +30,13 @@ export type DuckingMode = 'duck' | 'pause' | 'mix';
  * @param mode - The ducking mode to apply
  */
 export async function setDuckingMode(mode: DuckingMode): Promise<void> {
-  let interruptionModeIOS: InterruptionModeIOS;
-  let interruptionModeAndroid: InterruptionModeAndroid;
+  if (!Audio) {
+    console.warn('[audioDucking] Audio module not available, skipping setDuckingMode.');
+    return;
+  }
+
+  let interruptionModeIOS: any;
+  let interruptionModeAndroid: any;
 
   switch (mode) {
     case 'duck':

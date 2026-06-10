@@ -78,8 +78,12 @@ jest.mock('../../services/storage/tripStorage', () => ({
   addBreadcrumb: jest.fn(),
 }));
 
-jest.mock('../useGpsTracking');
-jest.mock('../useNarrationPlayer');
+jest.mock('../useGpsTracking', () => ({
+  useGpsTracking: jest.fn(),
+}));
+jest.mock('../useNarrationPlayer', () => ({
+  useNarrationPlayer: jest.fn(),
+}));
 
 import { useProximityTrigger } from '../useProximityTrigger';
 import { useGpsTracking } from '../useGpsTracking';

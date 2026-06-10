@@ -13,13 +13,12 @@
  * https://developers.google.com/maps/documentation/directions/get-directions
  */
 
+import { CONFIG } from '../../constants/config';
 import {
-  DirectionsRequest,
   DirectionsResponse,
-  DirectionsRoute,
+  DirectionsRoute
 } from '../../types/api';
 import { decodePolyline, samplePointsAlongPolyline } from '../../utils/geo';
-import { CONFIG } from '../../constants/config';
 
 /**
  * Fetches driving directions between two points from Google Directions API.
@@ -42,35 +41,99 @@ import { CONFIG } from '../../constants/config';
  *
  * @see https://developers.google.com/maps/documentation/directions/get-directions
  */
+function parseWaypoint(input: string): any {
+  const parts = input.split(',');
+  if (parts.length === 2) {
+    const lat = parseFloat(parts[0].trim());
+    const lng = parseFloat(parts[1].trim());
+    if (!isNaN(lat) && !isNaN(lng)) {
+      return {
+        location: {
+          latLng: {
+            latitude: lat,
+            longitude: lng,
+          },
+        },
+      };
+    }
+  }
+  return {
+    address: input,
+  };
+}
+
 export async function fetchDirections(
   originLat: number,
   originLng: number,
   destLat: number,
   destLng: number
 ): Promise<DirectionsRoute> {
-  const apiKey = process.env.GOOGLE_DIRECTIONS_API_KEY;
+  const apiKey = process.env.GOOGLE_DIRECTIONS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_DIRECTIONS_API_KEY;
   if (!apiKey) {
     throw new Error('Google Directions API key is missing');
   }
 
-  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originLat},${originLng}&destination=${destLat},${destLng}&mode=driving&alternatives=false&key=${apiKey}`;
+  const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 
-  const response = await fetch(url);
+  const body = {
+    origin: {
+      location: {
+        latLng: {
+          latitude: originLat,
+          longitude: originLng,
+        },
+      },
+    },
+    destination: {
+      location: {
+        latLng: {
+          latitude: destLat,
+          longitude: destLng,
+        },
+      },
+    },
+    travelMode: 'DRIVE',
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+    },
+    body: JSON.stringify(body),
+  });
+
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
 
-  const data = (await response.json()) as DirectionsResponse;
-  
-  if (data.status !== 'OK') {
-    throw new Error(`Directions API error: ${data.status}`);
-  }
+  const data = await response.json();
 
   if (!data.routes || data.routes.length === 0) {
     throw new Error('Directions API returned OK status but no routes found');
   }
 
-  return data.routes[0];
+  const route = data.routes[0];
+  const durationSeconds = parseInt(route.duration?.replace('s', '') || '0', 10) || 0;
+  const distanceMeters = route.distanceMeters || 0;
+  const distanceText = `${(distanceMeters / 1000).toFixed(1)} km`;
+  const durationText = `${Math.round(durationSeconds / 60)} mins`;
+
+  return {
+    overview_polyline: {
+      points: route.polyline?.encodedPolyline ?? '',
+    },
+    legs: [
+      {
+        distance: { text: distanceText, value: distanceMeters },
+        duration: { text: durationText, value: durationSeconds },
+        start_address: '',
+        end_address: '',
+      },
+    ],
+  };
 }
 
 /**
@@ -134,36 +197,45 @@ export async function fetchRoute(
   distanceMeters: number;
   durationSeconds: number;
 }> {
-  const apiKey = process.env.GOOGLE_DIRECTIONS_API_KEY;
+  const apiKey = process.env.GOOGLE_DIRECTIONS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_DIRECTIONS_API_KEY;
   if (!apiKey) {
     throw new Error('Google Directions API key is missing');
   }
 
-  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
-    origin
-  )}&destination=${encodeURIComponent(destination)}&mode=driving&alternatives=false&key=${apiKey}`;
+  const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 
-  const response = await fetch(url);
+  const body = {
+    origin: parseWaypoint(origin),
+    destination: parseWaypoint(destination),
+    travelMode: 'DRIVE',
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+    },
+    body: JSON.stringify(body),
+  });
+
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
 
-  const data = (await response.json());
-
-  if (data.status !== 'OK') {
-    throw new Error(`Directions API error: ${data.status}`);
-  }
+  const data = await response.json();
 
   if (!data.routes || data.routes.length === 0) {
     throw new Error('Directions API returned OK status but no routes found');
   }
 
   const route = data.routes[0];
-  const encodedPolyline = extractPolyline(route);
-  const { distanceMeters, durationSeconds } = extractRouteMetrics(route);
+  const durationSeconds = parseInt(route.duration?.replace('s', '') || '0', 10) || 0;
+  const distanceMeters = route.distanceMeters || 0;
 
   return {
-    encodedPolyline,
+    encodedPolyline: route.polyline?.encodedPolyline ?? '',
     distanceMeters,
     durationSeconds,
   };
