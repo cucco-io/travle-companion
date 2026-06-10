@@ -56,6 +56,7 @@ export interface PlacesSearchResponse {
   results: PlacesResult[];
   next_page_token?: string;
   status: string;
+  error_message?: string;
 }
 
 /**

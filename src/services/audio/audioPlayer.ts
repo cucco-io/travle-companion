@@ -1,7 +1,24 @@
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import * as Speech from 'expo-speech';
 import * as FileSystem from 'expo-file-system/legacy';
 import { POI } from '../../types/poi';
+
+// Dynamically load expo-av to prevent runtime crash in environments where the native ExponentAV module is missing
+let Audio: any = null;
+let InterruptionModeIOS: any = { DuckOthers: 2 };
+let InterruptionModeAndroid: any = { DuckOthers: 2 };
+
+try {
+  const ExpoAV = require('expo-av');
+  Audio = ExpoAV.Audio;
+  if (ExpoAV.InterruptionModeIOS) {
+    InterruptionModeIOS = ExpoAV.InterruptionModeIOS;
+  }
+  if (ExpoAV.InterruptionModeAndroid) {
+    InterruptionModeAndroid = ExpoAV.InterruptionModeAndroid;
+  }
+} catch (error) {
+  console.warn('[audioPlayer] expo-av is not available in this environment. Audio playback will be disabled.', error);
+}
 
 /**
  * Playback state reported by the audio player.
@@ -28,10 +45,10 @@ export type PlaybackState = 'playing' | 'paused' | 'stopped' | 'loading';
 export type PlaybackStatusCallback = (status: PlaybackStatus) => void;
 
 // Module level state
-let currentSound: Audio.Sound | null = null;
+let currentSound: any = null;
 let currentSoundIsPreloaded = false;
 let isSpeechActive = false;
-const preloadedSounds = new Map<string, Audio.Sound>();
+const preloadedSounds = new Map<string, any>();
 
 // Progress and State tracking
 let currentPlaybackState: PlaybackState = 'stopped';
@@ -146,6 +163,10 @@ export async function playAudioFile(
   };
 
   try {
+    if (!Audio) {
+      throw new Error('Audio module (expo-av) is not available in this environment.');
+    }
+
     const info = await FileSystem.getInfoAsync(filePath);
     if (!info.exists) {
       throw new Error(`File does not exist: ${filePath}`);
@@ -319,6 +340,10 @@ export async function seekAudio(positionMs: number): Promise<void> {
  * Should be called once during app initialization.
  */
 export async function configureAudioSession(): Promise<void> {
+  if (!Audio) {
+    console.warn('[audioPlayer] Audio module not available, skipping configureAudioSession.');
+    return;
+  }
   await Audio.setAudioModeAsync({
     allowsRecordingIOS: false,
     playsInSilentModeIOS: true,
@@ -337,6 +362,9 @@ export async function configureAudioSession(): Promise<void> {
  * @returns True if preload was successful
  */
 export async function preloadAudio(filePath: string): Promise<boolean> {
+  if (!Audio) {
+    return false;
+  }
   try {
     const info = await FileSystem.getInfoAsync(filePath);
     if (!info.exists) {

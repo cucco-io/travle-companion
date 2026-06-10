@@ -1,10 +1,12 @@
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import { initializeDatabase } from '@/src/services/storage/tripStorage';
+import { configureAudioSession } from '@/src/services/audio/audioPlayer';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -23,6 +25,7 @@ export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
+  const [dbInitialized, setDbInitialized] = useState(false);
 
   // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
@@ -30,12 +33,26 @@ export default function RootLayout() {
   }, [error]);
 
   useEffect(() => {
-    if (loaded) {
+    async function initApp() {
+      try {
+        await initializeDatabase();
+        await configureAudioSession();
+      } catch (e) {
+        console.error('App initialization failed:', e);
+      } finally {
+        setDbInitialized(true);
+      }
+    }
+    initApp();
+  }, []);
+
+  useEffect(() => {
+    if (loaded && dbInitialized) {
       SplashScreen.hideAsync();
     }
-  }, [loaded]);
+  }, [loaded, dbInitialized]);
 
-  if (!loaded) {
+  if (!loaded || !dbInitialized) {
     return null;
   }
 

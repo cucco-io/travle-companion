@@ -417,6 +417,24 @@ export async function updateTripStatus(
 }
 
 /**
+ * Updates a trip's origin and destination coordinates in the database.
+ * Used during preparation when text addresses/city names are resolved to coordinates.
+ */
+export async function updateTripCoordinates(
+  tripId: string,
+  origin: { name: string; lat: number; lng: number } | null,
+  destination: { name: string; lat: number; lng: number }
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE trips SET origin = ?, destination = ? WHERE id = ?`,
+    origin ? JSON.stringify(origin) : null,
+    JSON.stringify(destination),
+    tripId
+  );
+}
+
+/**
  * Saves POIs for a trip (bulk insert).
  *
  * @param tripId - The trip these POIs belong to
@@ -666,3 +684,74 @@ export async function deleteTrip(tripId: string): Promise<void> {
     console.error(`Failed to clean up files for trip ${tripId}:`, error);
   }
 }
+
+/**
+ * Updates a trip's name in the database.
+ */
+export async function updateTripName(tripId: string, name: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`UPDATE trips SET name = ? WHERE id = ?`, name, tripId);
+}
+
+/**
+ * Retrieves all unique POIs across all trips that have been researched by Gemini.
+ * Returns them ordered alphabetically by name.
+ */
+export async function getAllResearchedPOIs(): Promise<POI[]> {
+  const db = await getDb();
+
+  interface POIRow {
+    id: string;
+    trip_id: string;
+    name: string;
+    category: string;
+    lat: number;
+    lng: number;
+    rating: number;
+    narration_text: string;
+    narration_word_count: number;
+    estimated_listen_minutes: number;
+    audio_file_path: string | null;
+    trigger_radius_meters: number;
+    priority: number;
+    image_url: string | null;
+    image_local_path: string | null;
+    bookmarked: number;
+    played_at: string | null;
+  }
+
+  const rows = await db.getAllAsync<POIRow>(
+    `SELECT DISTINCT name, id, category, lat, lng, rating, narration_text,
+                     narration_word_count, estimated_listen_minutes, audio_file_path,
+                     trigger_radius_meters, priority, image_url, image_local_path,
+                     bookmarked, played_at
+     FROM pois
+     WHERE narration_text IS NOT NULL
+       AND narration_text != ''
+       AND narration_text != 'Failed to generate narration'
+     GROUP BY name
+     ORDER BY name ASC`
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    category: row.category as any,
+    coordinates: {
+      lat: row.lat,
+      lng: row.lng,
+    },
+    rating: row.rating,
+    narration_text: row.narration_text,
+    narration_word_count: row.narration_word_count,
+    estimated_listen_minutes: row.estimated_listen_minutes,
+    audio_file_path: row.audio_file_path,
+    trigger_radius_meters: row.trigger_radius_meters,
+    priority: row.priority,
+    image_url: row.image_url,
+    image_local_path: row.image_local_path,
+    bookmarked: row.bookmarked !== 0,
+    played_at: row.played_at,
+  }));
+}
+

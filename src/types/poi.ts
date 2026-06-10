@@ -81,4 +81,19 @@ export interface POI {
 
   /** ISO 8601 timestamp of when the narration was played, or null if not yet played */
   played_at: string | null;
+
+  /** Brief editorial description or summary of the POI (optional, from Places API) */
+  description?: string | null;
+
+  /** Total number of user ratings/reviews (optional, from Places API) */
+  user_ratings_total?: number | null;
+}
+
+/**
+ * Represents a single autocomplete recommendation from the Google Places API.
+ */
+export interface PlaceSuggestion {
+  placeId: string;
+  description: string;
+  mainText: string;
 }

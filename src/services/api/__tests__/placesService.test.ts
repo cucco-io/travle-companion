@@ -7,6 +7,7 @@ import {
   fetchNearbyPOIs,
   fetchPOIsAlongRoute,
   curatePOIs,
+  geocodeAddress,
 } from '../placesService';
 import { callGemini } from '../geminiService';
 import { RateLimiter } from '../../rateLimiter';
@@ -47,16 +48,15 @@ describe('placesService', () => {
   describe('fetchNearbyPlaces', () => {
     it('should query nearby places from Google API', async () => {
       const mockResult = {
-        results: [
+        places: [
           {
-            place_id: 'place-1',
-            name: 'Colosseum',
-            geometry: { location: { lat: 41.8902, lng: 12.4922 } },
+            id: 'place-1',
+            displayName: { text: 'Colosseum' },
+            location: { latitude: 41.8902, longitude: 12.4922 },
             rating: 4.8,
-            types: ['tourist_attraction'],
+            primaryType: 'tourist_attraction',
           },
         ],
-        status: 'OK',
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -69,7 +69,15 @@ describe('placesService', () => {
       expect(results).toHaveLength(1);
       expect(results[0].name).toBe('Colosseum');
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('location=41.8902,12.4922&radius=1000&type=tourist_attraction&key=test-api-key')
+        'https://places.googleapis.com/v1/places:searchNearby',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'X-Goog-Api-Key': 'test-api-key',
+            'X-Goog-FieldMask': 'places.id,places.displayName,places.primaryType,places.location,places.rating,places.userRatingCount,places.editorialSummary,places.photos',
+          }),
+          body: expect.stringContaining('"includedTypes":["tourist_attraction"]'),
+        })
       );
     });
 
@@ -90,13 +98,11 @@ describe('placesService', () => {
   describe('fetchAllNearbyPlaces (Pagination)', () => {
     it('should follow next_page_token up to maxResults', async () => {
       const mockPage1 = {
-        results: [{ place_id: 'p-1', name: 'POI 1', geometry: { location: { lat: 0, lng: 0 } } }],
-        next_page_token: 'token-page-2',
-        status: 'OK',
+        places: [{ id: 'p-1', displayName: { text: 'POI 1' }, location: { latitude: 0, longitude: 0 } }],
+        nextPageToken: 'token-page-2',
       };
       const mockPage2 = {
-        results: [{ place_id: 'p-2', name: 'POI 2', geometry: { location: { lat: 0, lng: 0 } } }],
-        status: 'OK',
+        places: [{ id: 'p-2', displayName: { text: 'POI 2' }, location: { latitude: 0, longitude: 0 } }],
       };
 
       (global.fetch as jest.Mock)
@@ -118,7 +124,10 @@ describe('placesService', () => {
       expect(global.fetch).toHaveBeenCalledTimes(2);
       expect(global.fetch).toHaveBeenNthCalledWith(
         2,
-        expect.stringContaining('pagetoken=token-page-2')
+        'https://places.googleapis.com/v1/places:searchNearby',
+        expect.objectContaining({
+          body: expect.stringContaining('"pageToken":"token-page-2"')
+        })
       );
     });
   });
@@ -130,8 +139,10 @@ describe('placesService', () => {
         name: 'Colosseum',
         geometry: { location: { lat: 41.8902, lng: 12.4922 } },
         rating: 4.8,
+        user_ratings_total: 1500,
         types: ['museum', 'tourist_attraction'],
-        photos: [{ photo_reference: 'photo-ref-123', height: 400, width: 600 }],
+        photos: [{ photo_reference: 'places/colosseum-1/photos/photo-ref-123', height: 400, width: 600 }],
+        vicinity: 'An iconic ancient Roman amphitheater',
       };
 
       const poi = transformPlaceToPOI(mockPlace, 150);
@@ -141,32 +152,33 @@ describe('placesService', () => {
       expect(poi.category).toBe('museum');
       expect(poi.rating).toBe(4.8);
       expect(poi.trigger_radius_meters).toBe(150);
+      expect(poi.description).toBe('An iconic ancient Roman amphitheater');
+      expect(poi.user_ratings_total).toBe(1500);
       expect(poi.image_url).toBe(
-        'https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=photo-ref-123&key=test-api-key'
+        'https://places.googleapis.com/v1/places/colosseum-1/photos/photo-ref-123/media?key=test-api-key&maxWidthPx=800'
       );
     });
   });
 
   describe('getPhotoUrl', () => {
     it('should build correct photo URL', () => {
-      const url = getPhotoUrl('ref-xyz', 500);
-      expect(url).toBe('https://maps.googleapis.com/maps/api/place/photo?maxwidth=500&photoreference=ref-xyz&key=test-api-key');
+      const url = getPhotoUrl('places/colosseum-1/photos/ref-xyz', 500);
+      expect(url).toBe('https://places.googleapis.com/v1/places/colosseum-1/photos/ref-xyz/media?key=test-api-key&maxWidthPx=500');
     });
   });
 
   describe('fetchNearbyPOIs', () => {
     it('should fetch POIs filtered and mapped by categories', async () => {
       const mockResponse = {
-        results: [
+        places: [
           {
-            place_id: 'museum-id',
-            name: 'Louvre',
-            geometry: { location: { lat: 48.8606, lng: 2.3376 } },
+            id: 'museum-id',
+            displayName: { text: 'Louvre' },
+            location: { latitude: 48.8606, longitude: 2.3376 },
             rating: 4.7,
-            types: ['museum'],
+            primaryType: 'museum',
           },
         ],
-        status: 'OK',
       };
 
       (global.fetch as jest.Mock).mockResolvedValue({
@@ -183,30 +195,29 @@ describe('placesService', () => {
 
     it('should sort results by user_ratings_total descending', async () => {
       const mockResponse = {
-        results: [
+        places: [
           {
-            place_id: 'poi-low',
-            name: 'Low Popularity POI',
-            geometry: { location: { lat: 48.8606, lng: 2.3376 } },
-            user_ratings_total: 10,
-            types: ['museum'],
+            id: 'poi-low',
+            displayName: { text: 'Low Popularity POI' },
+            location: { latitude: 48.8606, longitude: 2.3376 },
+            userRatingCount: 10,
+            primaryType: 'museum',
           },
           {
-            place_id: 'poi-high',
-            name: 'High Popularity POI',
-            geometry: { location: { lat: 48.8606, lng: 2.3376 } },
-            user_ratings_total: 1000,
-            types: ['museum'],
+            id: 'poi-high',
+            displayName: { text: 'High Popularity POI' },
+            location: { latitude: 48.8606, longitude: 2.3376 },
+            userRatingCount: 1000,
+            primaryType: 'museum',
           },
           {
-            place_id: 'poi-med',
-            name: 'Medium Popularity POI',
-            geometry: { location: { lat: 48.8606, lng: 2.3376 } },
-            user_ratings_total: 100,
-            types: ['museum'],
+            id: 'poi-med',
+            displayName: { text: 'Medium Popularity POI' },
+            location: { latitude: 48.8606, longitude: 2.3376 },
+            userRatingCount: 100,
+            primaryType: 'museum',
           },
         ],
-        status: 'OK',
       };
 
       (global.fetch as jest.Mock).mockResolvedValue({
@@ -221,44 +232,68 @@ describe('placesService', () => {
       expect(pois[1].name).toBe('Medium Popularity POI');
       expect(pois[2].name).toBe('Low Popularity POI');
     });
+
+    it('should map nature category to national_park and park (Table A) and not use Table B natural_feature', async () => {
+      const mockResponse = { places: [] };
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      await fetchNearbyPOIs(48.8606, 2.3376, 500, ['nature']);
+
+      // 'nature' maps to ['park', 'natural_landmark'].
+      // 'park' maps to 'park'.
+      // 'natural_landmark' maps to 'national_park' (was 'natural_feature').
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+
+      const calls = (global.fetch as jest.Mock).mock.calls;
+      const body1 = JSON.parse(calls[0][1].body);
+      const body2 = JSON.parse(calls[1][1].body);
+
+      // Verify that the requested types are 'park' and 'national_park'
+      const requestedTypes = [body1.includedTypes?.[0], body2.includedTypes?.[0]];
+      expect(requestedTypes).toContain('park');
+      expect(requestedTypes).toContain('national_park');
+      expect(requestedTypes).not.toContain('natural_feature');
+      expect(requestedTypes).not.toContain('point_of_interest');
+    });
   });
 
   describe('fetchPOIsAlongRoute', () => {
     it('should fetch and deduplicate POIs along multiple route points', async () => {
       const responsePoint1 = {
-        results: [
+        places: [
           {
-            place_id: 'poi-dup',
-            name: 'Duplicate POI',
-            geometry: { location: { lat: 1, lng: 1 } },
-            types: ['museum'],
+            id: 'poi-dup',
+            displayName: { text: 'Duplicate POI' },
+            location: { latitude: 1, longitude: 1 },
+            primaryType: 'museum',
           },
           {
-            place_id: 'poi-unique-1',
-            name: 'Unique 1',
-            geometry: { location: { lat: 1.1, lng: 1.1 } },
-            types: ['park'],
+            id: 'poi-unique-1',
+            displayName: { text: 'Unique 1' },
+            location: { latitude: 1.1, longitude: 1.1 },
+            primaryType: 'park',
           },
         ],
-        status: 'OK',
       };
 
       const responsePoint2 = {
-        results: [
+        places: [
           {
-            place_id: 'poi-dup',
-            name: 'Duplicate POI',
-            geometry: { location: { lat: 1, lng: 1 } },
-            types: ['museum'],
+            id: 'poi-dup',
+            displayName: { text: 'Duplicate POI' },
+            location: { latitude: 1, longitude: 1 },
+            primaryType: 'museum',
           },
           {
-            place_id: 'poi-unique-2',
-            name: 'Unique 2',
-            geometry: { location: { lat: 2, lng: 2 } },
-            types: ['church'],
+            id: 'poi-unique-2',
+            displayName: { text: 'Unique 2' },
+            location: { latitude: 2, longitude: 2 },
+            primaryType: 'place_of_worship',
           },
         ],
-        status: 'OK',
       };
 
       (global.fetch as jest.Mock)
@@ -383,6 +418,60 @@ describe('placesService', () => {
       const curated = await curationPromise;
       expect(curated).toHaveLength(1);
       expect(curated[0].name).toBe('Colosseum');
+    });
+  });
+
+  describe('geocodeAddress', () => {
+    it('should resolve a city name to coordinates', async () => {
+      const mockResponse = {
+        places: [
+          {
+            location: {
+              latitude: 48.8566,
+              longitude: 2.3522,
+            },
+          },
+        ],
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      const coords = await geocodeAddress('Paris');
+
+      expect(coords).toEqual({ lat: 48.8566, lng: 2.3522 });
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://places.googleapis.com/v1/places:searchText',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'X-Goog-Api-Key': 'test-api-key',
+            'X-Goog-FieldMask': 'places.location',
+          }),
+          body: expect.stringContaining('"textQuery":"Paris"'),
+        })
+      );
+    });
+
+    it('should throw error if textSearch fails', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        statusText: 'Bad Request',
+        json: async () => ({ error: { message: 'Invalid query' } }),
+      });
+
+      await expect(geocodeAddress('Paris')).rejects.toThrow('Google Places API textSearch failed: Invalid query');
+    });
+
+    it('should throw error if no places found', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ places: [] }),
+      });
+
+      await expect(geocodeAddress('UnknownCity')).rejects.toThrow('Could not resolve coordinates for address: UnknownCity');
     });
   });
 });
