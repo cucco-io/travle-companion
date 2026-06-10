@@ -13,7 +13,7 @@
  * https://developers.google.com/maps/documentation/places/web-service/nearby-search
  */
 
-import { POI, POICategory } from '../../types/poi';
+import { POI, POICategory, PlaceSuggestion } from '../../types/poi';
 import {
   PlacesSearchRequest,
   PlacesSearchResponse,
@@ -312,6 +312,8 @@ export function transformPlaceToPOI(
     image_local_path: null,
     bookmarked: false,
     played_at: null,
+    description: place.vicinity ?? null,
+    user_ratings_total: place.user_ratings_total ?? 0,
   };
 }
 
@@ -485,14 +487,21 @@ export async function fetchPOIsAlongRoute(
 export async function curatePOIs(
   rawPOIs: POI[],
   mode: TripMode,
-  budget: number
+  budget: number,
+  destinationName?: string
 ): Promise<POI[]> {
   if (rawPOIs.length === 0) {
     return [];
   }
 
-  const candidatePOIs = rawPOIs.map((p) => ({ name: p.name, category: p.category }));
-  const prompt = buildCurationPrompt(candidatePOIs, mode, budget);
+  const candidatePOIs = rawPOIs.map((p) => ({
+    name: p.name,
+    category: p.category,
+    rating: p.rating,
+    user_ratings_total: p.user_ratings_total ?? 0,
+    description: p.description ?? null,
+  }));
+  const prompt = buildCurationPrompt(candidatePOIs, mode, budget, destinationName);
 
   const limiter = RateLimiter.getInstance();
 
@@ -548,4 +557,51 @@ export async function curatePOIs(
   }
 
   return rankPOIs(curatedPOIs, budget);
+}
+
+/**
+ * Fetches search suggestions for places/cities from Google Places Autocomplete API (New).
+ *
+ * @param input - The partial search text query typed by the user
+ * @returns Array of parsed place suggestions
+ */
+export async function fetchPlaceSuggestions(input: string): Promise<PlaceSuggestion[]> {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google Places API key is missing');
+  }
+
+  if (!input || input.trim().length < 2) {
+    return [];
+  }
+
+  const url = 'https://places.googleapis.com/v1/places:autocomplete';
+  const body = {
+    input,
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'suggestions.placePrediction.text.text,suggestions.placePrediction.placeId,suggestions.placePrediction.structuredFormat',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    await handlePlacesError(response, 'Google Places Autocomplete failed');
+  }
+
+  const data = await response.json();
+  const suggestions = data.suggestions || [];
+  
+  return suggestions
+    .filter((s: any) => s.placePrediction)
+    .map((s: any) => ({
+      placeId: s.placePrediction.placeId,
+      description: s.placePrediction.text?.text ?? '',
+      mainText: s.placePrediction.structuredFormat?.mainText?.text ?? '',
+    }));
 }

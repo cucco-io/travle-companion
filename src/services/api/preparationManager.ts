@@ -270,7 +270,7 @@ class TripPreparationManager {
       });
 
       const budget = CONFIG.POI_BUDGET.MEDIUM;
-      const curatedPOIs = await curatePOIs(rawPOIs, params.mode, budget);
+      const curatedPOIs = await curatePOIs(rawPOIs, params.mode, budget, params.destination.name);
       
       // Assign default values to satisfy NOT NULL SQLite constraints
       const initialPOIs = curatedPOIs.map(poi => ({

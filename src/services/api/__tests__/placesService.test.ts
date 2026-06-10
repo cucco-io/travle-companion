@@ -139,8 +139,10 @@ describe('placesService', () => {
         name: 'Colosseum',
         geometry: { location: { lat: 41.8902, lng: 12.4922 } },
         rating: 4.8,
+        user_ratings_total: 1500,
         types: ['museum', 'tourist_attraction'],
         photos: [{ photo_reference: 'places/colosseum-1/photos/photo-ref-123', height: 400, width: 600 }],
+        vicinity: 'An iconic ancient Roman amphitheater',
       };
 
       const poi = transformPlaceToPOI(mockPlace, 150);
@@ -150,6 +152,8 @@ describe('placesService', () => {
       expect(poi.category).toBe('museum');
       expect(poi.rating).toBe(4.8);
       expect(poi.trigger_radius_meters).toBe(150);
+      expect(poi.description).toBe('An iconic ancient Roman amphitheater');
+      expect(poi.user_ratings_total).toBe(1500);
       expect(poi.image_url).toBe(
         'https://places.googleapis.com/v1/places/colosseum-1/photos/photo-ref-123/media?key=test-api-key&maxWidthPx=800'
       );

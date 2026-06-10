@@ -29,6 +29,8 @@ import {
 import { useRouter } from 'expo-router';
 import { getAllTrips } from '@/src/services/storage/tripStorage';
 import { Trip } from '@/src/types/trip';
+import { fetchPlaceSuggestions } from '@/src/services/api/placesService';
+import { PlaceSuggestion } from '@/src/types/poi';
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
 const COLORS = {
@@ -125,11 +127,105 @@ export default function ExploreScreen() {
   // Error
   const [formError, setFormError] = useState('');
 
+  // Autocomplete suggestions state
+  const [activeInput, setActiveInput] = useState<'destination' | 'routeOrigin' | 'routeDestination' | null>(null);
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const routeModeAnim = useRef(new Animated.Value(0)).current;
   const headerPulse = useRef(new Animated.Value(1)).current;
+
+  // ── Autocomplete Logic ──────────────────────────────────────────────────
+  const performSearch = useCallback(async (text: string, type: 'destination' | 'routeOrigin' | 'routeDestination') => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    if (!text.trim() || text.trim().length < 2) {
+      setSuggestions([]);
+      setLoadingSuggestions(false);
+      return;
+    }
+
+    setLoadingSuggestions(true);
+
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const results = await fetchPlaceSuggestions(text);
+        // Only update state if this input is still active
+        setSuggestions(results);
+      } catch (err) {
+        console.warn('Autocomplete search failed:', err);
+        setSuggestions([]);
+      } finally {
+        setLoadingSuggestions(false);
+      }
+    }, 300);
+  }, []);
+
+  const handleDestinationChange = (text: string) => {
+    setDestination(text);
+    setActiveInput('destination');
+    performSearch(text, 'destination');
+  };
+
+  const handleOriginChange = (text: string) => {
+    setRouteOrigin(text);
+    setActiveInput('routeOrigin');
+    performSearch(text, 'routeOrigin');
+  };
+
+  const handleRouteDestinationChange = (text: string) => {
+    setRouteDestination(text);
+    setActiveInput('routeDestination');
+    performSearch(text, 'routeDestination');
+  };
+
+  const handleSelectSuggestion = (suggestion: PlaceSuggestion) => {
+    const value = suggestion.description || suggestion.mainText;
+    
+    if (activeInput === 'destination') {
+      setDestination(value);
+    } else if (activeInput === 'routeOrigin') {
+      setRouteOrigin(value);
+    } else if (activeInput === 'routeDestination') {
+      setRouteDestination(value);
+    }
+
+    // Reset autocomplete state
+    setSuggestions([]);
+    setActiveInput(null);
+  };
+
+  const renderSuggestions = (type: 'destination' | 'routeOrigin' | 'routeDestination') => {
+    if (activeInput !== type || suggestions.length === 0) {
+      return null;
+    }
+
+    return (
+      <View style={styles.suggestionsDropdown}>
+        <ScrollView style={styles.suggestionsScroll} keyboardShouldPersistTaps="handled">
+          {suggestions.map((item) => (
+            <TouchableOpacity
+              key={item.placeId}
+              style={styles.suggestionItem}
+              onPress={() => handleSelectSuggestion(item)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.suggestionMain}>{item.mainText}</Text>
+              <Text style={styles.suggestionSub} numberOfLines={1}>
+                {item.description}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
 
   // ── On mount: fade in + load trips ──────────────────────────────────────
   useEffect(() => {
@@ -147,7 +243,7 @@ export default function ExploreScreen() {
     ]).start();
 
     // Subtle pulsing on the compass emoji
-    Animated.loop(
+    const pulseAnim = Animated.loop(
       Animated.sequence([
         Animated.timing(headerPulse, {
           toValue: 1.08,
@@ -160,9 +256,17 @@ export default function ExploreScreen() {
           useNativeDriver: true,
         }),
       ])
-    ).start();
+    );
+    pulseAnim.start();
 
     loadSavedTrips();
+
+    return () => {
+      pulseAnim.stop();
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
   }, []);
 
   // ── Toggle mode animation ─────────────────────────────────────────────────
@@ -308,9 +412,9 @@ export default function ExploreScreen() {
           <View style={styles.modeDivider} />
 
           {/* City mode — single destination */}
-          <Animated.View style={{ opacity: cityInputOpacity }}>
+          <Animated.View style={{ opacity: cityInputOpacity, zIndex: activeInput === 'destination' ? 100 : 1 }}>
             {mode === 'city' && (
-              <View style={styles.inputGroup}>
+              <View style={[styles.inputGroup, { zIndex: activeInput === 'destination' ? 100 : 1 }]}>
                 <Text style={styles.inputLabel}>Destination</Text>
                 <View style={styles.inputWrapper}>
                   <Text style={styles.inputIcon}>📍</Text>
@@ -319,12 +423,25 @@ export default function ExploreScreen() {
                     placeholder="City name or address..."
                     placeholderTextColor={COLORS.whiteAlpha50}
                     value={destination}
-                    onChangeText={setDestination}
+                    onChangeText={handleDestinationChange}
+                    onFocus={() => {
+                      setActiveInput('destination');
+                      if (destination.trim().length >= 2) performSearch(destination, 'destination');
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        setActiveInput(curr => curr === 'destination' ? null : curr);
+                      }, 200);
+                    }}
                     returnKeyType="done"
                     autoCorrect={false}
                     selectionColor={COLORS.gold}
                   />
+                  {loadingSuggestions && activeInput === 'destination' && (
+                    <ActivityIndicator size="small" color={COLORS.gold} style={styles.inputLoading} />
+                  )}
                 </View>
+                {renderSuggestions('destination')}
               </View>
             )}
           </Animated.View>
@@ -334,12 +451,13 @@ export default function ExploreScreen() {
             style={{
               opacity: routeInputOpacity,
               height: routeInputHeight,
-              overflow: 'hidden',
+              overflow: mode === 'route' ? 'visible' : 'hidden',
+              zIndex: activeInput ? 100 : 1,
             }}
           >
             {mode === 'route' && (
               <>
-                <View style={styles.inputGroup}>
+                <View style={[styles.inputGroup, { zIndex: activeInput === 'routeOrigin' ? 100 : 2 }]}>
                   <Text style={styles.inputLabel}>Starting Point</Text>
                   <View style={styles.inputWrapper}>
                     <Text style={styles.inputIcon}>🔵</Text>
@@ -348,14 +466,27 @@ export default function ExploreScreen() {
                       placeholder="Where are you starting?"
                       placeholderTextColor={COLORS.whiteAlpha50}
                       value={routeOrigin}
-                      onChangeText={setRouteOrigin}
+                      onChangeText={handleOriginChange}
+                      onFocus={() => {
+                        setActiveInput('routeOrigin');
+                        if (routeOrigin.trim().length >= 2) performSearch(routeOrigin, 'routeOrigin');
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => {
+                          setActiveInput(curr => curr === 'routeOrigin' ? null : curr);
+                        }, 200);
+                      }}
                       returnKeyType="next"
                       autoCorrect={false}
                       selectionColor={COLORS.gold}
                     />
+                    {loadingSuggestions && activeInput === 'routeOrigin' && (
+                      <ActivityIndicator size="small" color={COLORS.gold} style={styles.inputLoading} />
+                    )}
                   </View>
+                  {renderSuggestions('routeOrigin')}
                 </View>
-                <View style={styles.inputGroup}>
+                <View style={[styles.inputGroup, { zIndex: activeInput === 'routeDestination' ? 100 : 1 }]}>
                   <Text style={styles.inputLabel}>Destination</Text>
                   <View style={styles.inputWrapper}>
                     <Text style={styles.inputIcon}>🔴</Text>
@@ -364,12 +495,25 @@ export default function ExploreScreen() {
                       placeholder="Where are you headed?"
                       placeholderTextColor={COLORS.whiteAlpha50}
                       value={routeDestination}
-                      onChangeText={setRouteDestination}
+                      onChangeText={handleRouteDestinationChange}
+                      onFocus={() => {
+                        setActiveInput('routeDestination');
+                        if (routeDestination.trim().length >= 2) performSearch(routeDestination, 'routeDestination');
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => {
+                          setActiveInput(curr => curr === 'routeDestination' ? null : curr);
+                        }, 200);
+                      }}
                       returnKeyType="done"
                       autoCorrect={false}
                       selectionColor={COLORS.gold}
                     />
+                    {loadingSuggestions && activeInput === 'routeDestination' && (
+                      <ActivityIndicator size="small" color={COLORS.gold} style={styles.inputLoading} />
+                    )}
                   </View>
+                  {renderSuggestions('routeDestination')}
                 </View>
               </>
             )}
@@ -716,5 +860,46 @@ const styles = StyleSheet.create({
     color: COLORS.navy,
     textAlign: 'center',
     lineHeight: 14,
+  },
+
+  // Autocomplete suggestions styles
+  suggestionsDropdown: {
+    position: 'absolute',
+    top: 72,
+    left: 0,
+    right: 0,
+    backgroundColor: '#1E2E4A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.whiteAlpha20,
+    maxHeight: 200,
+    zIndex: 9999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  suggestionsScroll: {
+    flex: 1,
+  },
+  suggestionItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  suggestionMain: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.white,
+    marginBottom: 2,
+  },
+  suggestionSub: {
+    fontSize: 11,
+    color: COLORS.whiteAlpha50,
+  },
+  inputLoading: {
+    marginLeft: 6,
   },
 });

@@ -45,27 +45,47 @@ import { CONFIG } from '../constants/config';
  * - Include few-shot examples if needed for reliability
  */
 export function buildCurationPrompt(
-  pois: Array<{ name: string; category: string }>,
+  pois: Array<{
+    name: string;
+    category: string;
+    rating?: number;
+    user_ratings_total?: number;
+    description?: string | null;
+  }>,
   mode: TripMode,
-  budget: number
+  budget: number,
+  destinationName?: string
 ): string {
   const candidateList = pois
-    .map((p, index) => `${index + 1}. Name: "${p.name}", Category: "${p.category}"`)
+    .map((p, index) => {
+      const ratingStr = p.rating !== undefined ? `, Rating: ${p.rating}` : '';
+      const reviewsStr = p.user_ratings_total !== undefined ? `, Reviews: ${p.user_ratings_total}` : '';
+      const descStr = p.description ? `, Description: "${p.description}"` : '';
+      return `${index + 1}. Name: "${p.name}", Category: "${p.category}"${ratingStr}${reviewsStr}${descStr}`;
+    })
     .join('\n');
 
+  const destinationContext = destinationName
+    ? `The traveler is visiting: ${destinationName}.\n`
+    : '';
+
   const modeInstruction = mode === 'city'
-    ? 'For a city-based trip, prefer iconic landmarks and walkable clusters of attractions that are close to each other.'
+    ? 'For a city-based trip, prefer iconic landmarks, historical sites, architectural marvels, highly-rated places of interest, and walkable clusters of attractions that are close to each other.'
     : 'For a route-based trip, prefer roadside attractions, scenic stops, and highway-visible landmarks suitable for a road trip.';
 
   return `You are an expert travel curator. Given the following list of candidate Points of Interest (POIs), select and rank the best ones for a ${mode} trip.
 
-Instructions:
+${destinationContext}Instructions:
 1. Review the candidate POI list below.
-2. Remove duplicates and very low-quality entries.
+2. Remove duplicates, very low-quality entries, and locations that are not interesting to a tourist.
 3. Select up to ${budget} POIs that provide the best travel experience.
-4. Ensure category diversity (avoid selecting too many of the same type of POI; aim for a balanced mix).
-5. ${modeInstruction}
-6. Rank the selected POIs by their interestingness and relevance. Put the most interesting POIs first.
+4. Filter out ordinary local neighborhood-only places:
+   - Carefully evaluate POIs in categories like "park" or "other". If a park is a generic local city/neighborhood park (characterised by a small review count, low rating, or lacking a descriptive/historical summary), you MUST filter it out.
+   - Keep iconic, famous, or historically/scenically significant parks (like Central Park in New York or Golden Gate Park in San Francisco), which are characterised by high review counts (e.g. hundreds or thousands of reviews) and rich descriptions.
+   - Avoid ordinary playgrounds, community pools, sports complexes, basic strip malls, dog parks, or generic local recreation grounds that have no historical, architectural, cultural, or quirky tourist appeal.
+5. Ensure category diversity (avoid selecting too many of the same type of POI; aim for a balanced mix).
+6. ${modeInstruction}
+7. Rank the selected POIs by their interestingness and tourist relevance. Put the most interesting, iconic, or historically rich POIs first.
 
 Candidates:
 ${candidateList}
