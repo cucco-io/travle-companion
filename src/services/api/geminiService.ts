@@ -171,36 +171,35 @@ export async function generateAllNarrations(
   const results = await limiter.processAll(
     pois,
     async (poi) => {
-      return await generateNarration(poi, preferences);
+      try {
+        const narrationText = await generateNarration(poi, preferences);
+        const wordCount = narrationText.trim() === '' ? 0 : narrationText.trim().split(/\s+/).length;
+        poi.narration_text = narrationText;
+        poi.narration_word_count = wordCount;
+        poi.estimated_listen_minutes = wordCount / 150;
+        return narrationText;
+      } catch (err) {
+        poi.narration_text = 'Failed to generate narration';
+        poi.narration_word_count = 0;
+        poi.estimated_listen_minutes = 0;
+        throw err;
+      }
     },
     onProgress,
     signal
   );
 
-  return pois.map((poi, index) => {
-    const result = results[index];
-    if (result && result.success && typeof result.value === 'string') {
-      const narrationText = result.value;
-      const wordCount = narrationText.trim() === '' ? 0 : narrationText.trim().split(/\s+/).length;
-      return {
-        ...poi,
-        narration_text: narrationText,
-        narration_word_count: wordCount,
-        estimated_listen_minutes: wordCount / 150,
-      };
-    } else {
+  // Print errors for any failed tasks
+  results.forEach((result, index) => {
+    if (!result.success) {
       console.error(
-        `Failed to generate narration for POI "${poi.name}":`,
-        result?.error || new Error('Unknown error')
+        `Failed to generate narration for POI "${pois[index].name}":`,
+        result.error || new Error('Unknown error')
       );
-      return {
-        ...poi,
-        narration_text: 'Failed to generate narration',
-        narration_word_count: 0,
-        estimated_listen_minutes: 0,
-      };
     }
   });
+
+  return pois;
 }
 
 /**

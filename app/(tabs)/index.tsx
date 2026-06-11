@@ -304,7 +304,7 @@ export default function ExploreScreen() {
 
   const routeInputHeight = routeModeAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 110],
+    outputRange: [0, 160],
   });
 
   const cityInputOpacity = routeModeAnim.interpolate({

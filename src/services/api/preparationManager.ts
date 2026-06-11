@@ -282,9 +282,11 @@ class TripPreparationManager {
 
       await savePOIs(tripId, initialPOIs);
 
+      newTrip.pois = initialPOIs;
       updateState({
         poiCount: initialPOIs.length,
         statusMessage: `Curating best POIs... ${initialPOIs.length} selected`,
+        trip: { ...newTrip },
       });
       throwIfCancelled();
 
@@ -293,12 +295,15 @@ class TripPreparationManager {
         stage: 'generating_narrations',
         progress: 0.45,
         statusMessage: `Generating narrations... 0/${initialPOIs.length}`,
+        trip: { ...newTrip },
       });
 
       const narrationOnProgress = (completed: number, total: number) => {
+        newTrip.pois = [...initialPOIs];
         updateState({
           statusMessage: `Generating narrations... ${completed}/${total}`,
           progress: 0.45 + (completed / total) * 0.2,
+          trip: { ...newTrip },
         });
       };
 
@@ -313,6 +318,8 @@ class TripPreparationManager {
 
       // Save narrated POIs incrementally
       await savePOIs(tripId, narratedPOIs);
+      newTrip.pois = narratedPOIs;
+      updateState({ trip: { ...newTrip } });
       throwIfCancelled();
 
       // Step 6: Synthesize audio
@@ -324,12 +331,15 @@ class TripPreparationManager {
           stage: 'synthesizing_audio',
           progress: 0.65,
           statusMessage: `Creating audio... 0/${narratedPOIs.length}`,
+          trip: { ...newTrip },
         });
 
         const audioOnProgress = (completed: number, total: number) => {
+          newTrip.pois = [...narratedPOIs];
           updateState({
             statusMessage: `Creating audio... ${completed}/${total}`,
             progress: 0.65 + (completed / total) * 0.15,
+            trip: { ...newTrip },
           });
         };
 
@@ -346,11 +356,14 @@ class TripPreparationManager {
           stage: 'synthesizing_audio',
           progress: 0.8,
           statusMessage: 'Skipping audio synthesis (On-device TTS active)',
+          trip: { ...newTrip },
         });
       }
 
       // Save audioed POIs incrementally
       await savePOIs(tripId, audioedPOIs);
+      newTrip.pois = audioedPOIs;
+      updateState({ trip: { ...newTrip } });
       throwIfCancelled();
 
       // Step 7: Download images
@@ -358,12 +371,15 @@ class TripPreparationManager {
         stage: 'caching',
         progress: 0.8,
         statusMessage: `Downloading images... 0/${audioedPOIs.length}`,
+        trip: { ...newTrip },
       });
 
       const imageOnProgress = (completed: number, total: number) => {
+        newTrip.pois = [...audioedPOIs];
         updateState({
           statusMessage: `Downloading images... ${completed}/${total}`,
           progress: 0.8 + (completed / total) * 0.1,
+          trip: { ...newTrip },
         });
       };
 
@@ -375,6 +391,7 @@ class TripPreparationManager {
       updateState({
         progress: 0.9,
         statusMessage: 'Saving trip data...',
+        trip: { ...newTrip, pois: finalPOIs },
       });
 
       await savePOIs(tripId, finalPOIs);

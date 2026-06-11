@@ -258,6 +258,22 @@ describe('placesService', () => {
       expect(requestedTypes).not.toContain('natural_feature');
       expect(requestedTypes).not.toContain('point_of_interest');
     });
+
+    it('should map church category to church (Table A) and not use Table B place_of_worship', async () => {
+      const mockResponse = { places: [] };
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      });
+
+      await fetchNearbyPOIs(48.8606, 2.3376, 500, ['church']);
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const calls = (global.fetch as jest.Mock).mock.calls;
+      const body = JSON.parse(calls[0][1].body);
+      expect(body.includedTypes?.[0]).toBe('church');
+      expect(body.includedTypes?.[0]).not.toBe('place_of_worship');
+    });
   });
 
   describe('fetchPOIsAlongRoute', () => {

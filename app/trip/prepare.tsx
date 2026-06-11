@@ -38,6 +38,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTripPreparation, PreparationStage } from '@/src/hooks/useTripPreparation';
 import { TripPreferences, TripMode, InterestCategory, NarrationDepth } from '@/src/types/trip';
 import { deleteTrip } from '@/src/services/storage/tripStorage';
+import { loadSettings } from '@/src/services/storage/settingsStorage';
 import { SymbolView } from 'expo-symbols';
 
 import { useAppTheme } from '@/src/theme/ThemeContext';
@@ -48,7 +49,7 @@ import {
   Badge,
   Icon,
 } from '@/src/theme/UIComponents';
-import { Icons, SymbolName } from '@/src/theme/icons';
+import { Icons, SymbolName, getCategoryIcon } from '@/src/theme/icons';
 import { Typography, Spacing, Radius } from '@/src/theme/theme';
 
 // ─── Interest categories config ───────────────────────────────────────────────
@@ -220,6 +221,20 @@ export default function TripPrepareScreen() {
   const [narrationDepth, setNarrationDepth] = useState<NarrationDepth>('standard');
   const [kidFriendly, setKidFriendly] = useState(false);
   const [language, setLanguage] = useState('en');
+  const [ttsProvider, setTtsProvider] = useState<'gemini' | 'device'>('gemini');
+
+  // Load ttsProvider from settings
+  useEffect(() => {
+    async function fetchTtsProvider() {
+      try {
+        const settings = await loadSettings();
+        setTtsProvider(settings.ttsProvider);
+      } catch (err) {
+        console.warn('Failed to load settings in prepare screen:', err);
+      }
+    }
+    fetchTtsProvider();
+  }, []);
 
   // Load preferences from existing trip if editing/resuming
   useEffect(() => {
@@ -264,8 +279,9 @@ export default function TripPrepareScreen() {
   const isReady = stage === 'ready';
 
   // ── Animations ────────────────────────────────────────────────────────────
-  const formFadeAnim = useRef(new Animated.Value(1)).current;
-  const pipelineFadeAnim = useRef(new Animated.Value(0)).current;
+  // Initialize opacity values based on the current phase at mount to prevent flakiness
+  const formFadeAnim = useRef(new Animated.Value(isPipelinePhase ? 0 : 1)).current;
+  const pipelineFadeAnim = useRef(new Animated.Value(isPipelinePhase ? 1 : 0)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
   const successScaleAnim = useRef(new Animated.Value(0)).current;
 
@@ -281,6 +297,20 @@ export default function TripPrepareScreen() {
         Animated.timing(pipelineFadeAnim, {
           toValue: 1,
           duration: 500,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      // Fade out pipeline, fade in form
+      Animated.parallel([
+        Animated.timing(formFadeAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pipelineFadeAnim, {
+          toValue: 0,
+          duration: 300,
           useNativeDriver: true,
         }),
       ]).start();
@@ -633,6 +663,158 @@ export default function TripPrepareScreen() {
                 ))}
               </View>
 
+              {/* Dynamic Researched Places List */}
+              {/* SKELETON LOADER (when no POIs exist yet during fetching/routing) */}
+              {(!trip?.pois || trip.pois.length === 0) && (stage === 'fetching_route' || stage === 'fetching_pois' || stage === 'curating') && (
+                <View style={[styles.skeletonCard, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+                  <ActivityIndicator size="small" color={colors.tint} style={{ marginRight: Spacing.md }} />
+                  <Text style={[Typography.subheadline, { color: colors.textSecondary, flex: 1 }]}>
+                    {stage === 'fetching_route' 
+                      ? 'Calculating route directions...' 
+                      : stage === 'fetching_pois' 
+                      ? 'Scanning Google Places for tourist sights...' 
+                      : 'Curation engine ranking candidate places...'}
+                  </Text>
+                </View>
+              )}
+
+              {/* LIST OF POIS */}
+              {trip?.pois && trip.pois.length > 0 && (
+                <View style={styles.poisContainer}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={[Typography.headline, { color: colors.textPrimary, fontWeight: '700' }]}>
+                      Researched Places
+                    </Text>
+                    <View style={[styles.badge, { backgroundColor: colors.tint + '15' }]}>
+                      <Text style={[Typography.caption1, { color: colors.tint, fontWeight: '700' }]}>
+                        {trip.pois.length} spots
+                      </Text>
+                    </View>
+                  </View>
+
+                  {trip.pois.map((poi, idx) => {
+                    // Compute POI status dynamically
+                    let statusLabel = 'Queued';
+                    let statusIcon = Icons.clock;
+                    let statusColor = colors.textTertiary;
+                    let isSpinning = false;
+
+                    if (stage === 'fetching_route' || stage === 'fetching_pois' || stage === 'curating') {
+                      statusLabel = 'Curating...';
+                      statusIcon = Icons.circle;
+                      statusColor = colors.textTertiary;
+                    } else if (stage === 'generating_narrations') {
+                      if (poi.narration_text) {
+                        if (poi.narration_text === 'Failed to generate narration') {
+                          statusLabel = 'Failed';
+                          statusIcon = Icons.warningTriangle;
+                          statusColor = colors.destructive;
+                        } else {
+                          statusLabel = 'Story drafted';
+                          statusIcon = Icons.docText;
+                          statusColor = colors.success;
+                        }
+                      } else {
+                        const firstUnnarratedIdx = trip.pois.findIndex(p => !p.narration_text);
+                        if (idx === firstUnnarratedIdx) {
+                          statusLabel = 'Writing story...';
+                          statusIcon = Icons.pencil;
+                          statusColor = colors.tint;
+                          isSpinning = true;
+                        }
+                      }
+                    } else if (stage === 'synthesizing_audio') {
+                      if (ttsProvider === 'gemini') {
+                        if (poi.audio_file_path) {
+                          statusLabel = 'Audio ready';
+                          statusIcon = Icons.speaker;
+                          statusColor = colors.success;
+                        } else if (poi.narration_text && poi.narration_text !== 'Failed to generate narration') {
+                          const firstUnaudioIdx = trip.pois.findIndex(p => p.narration_text && p.narration_text !== 'Failed to generate narration' && !p.audio_file_path);
+                          if (idx === firstUnaudioIdx) {
+                            statusLabel = 'Creating voice...';
+                            statusIcon = Icons.waveform;
+                            statusColor = colors.tint;
+                            isSpinning = true;
+                          }
+                        } else {
+                          statusLabel = 'Failed story';
+                          statusIcon = Icons.warningTriangle;
+                          statusColor = colors.destructive;
+                        }
+                      } else {
+                        statusLabel = 'On-device TTS';
+                        statusIcon = Icons.checkmark;
+                        statusColor = colors.success;
+                      }
+                    } else if (stage === 'caching') {
+                      if (!poi.image_url || poi.image_local_path) {
+                        statusLabel = 'Ready';
+                        statusIcon = Icons.checkmarkCircle;
+                        statusColor = colors.success;
+                      } else {
+                        const firstUncachedIdx = trip.pois.findIndex(p => p.image_url && !p.image_local_path);
+                        if (idx === firstUncachedIdx) {
+                          statusLabel = 'Caching image...';
+                          statusIcon = Icons.photoOnRect;
+                          statusColor = colors.tint;
+                          isSpinning = true;
+                        }
+                      }
+                    } else if (stage === 'ready') {
+                      statusLabel = 'Ready';
+                      statusIcon = Icons.checkmarkCircle;
+                      statusColor = colors.success;
+                    }
+
+                    const isLast = idx === trip.pois.length - 1;
+
+                    return (
+                      <View
+                        key={poi.id}
+                        style={[
+                          styles.poiRow,
+                          {
+                            backgroundColor: colors.cardBackground,
+                            borderColor: colors.cardBorder,
+                            borderBottomWidth: isLast ? StyleSheet.hairlineWidth : 0,
+                            borderTopLeftRadius: idx === 0 ? Radius.lg : 0,
+                            borderTopRightRadius: idx === 0 ? Radius.lg : 0,
+                            borderBottomLeftRadius: isLast ? Radius.lg : 0,
+                            borderBottomRightRadius: isLast ? Radius.lg : 0,
+                          }
+                        ]}
+                      >
+                        <View style={[styles.poiIconContainer, { backgroundColor: colors.fillTertiary }]}>
+                          <SymbolView name={getCategoryIcon(poi.category)} tintColor={colors.tint} size={18} />
+                        </View>
+                        
+                        <View style={styles.poiInfo}>
+                          <Text style={[Typography.subheadline, { color: colors.textPrimary, fontWeight: '600' }]} numberOfLines={1}>
+                            {poi.name}
+                          </Text>
+                          <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2 }]}>
+                            {poi.category.replace(/_/g, ' ')}
+                            {poi.rating > 0 ? ` • ★ ${poi.rating.toFixed(1)}` : ''}
+                          </Text>
+                        </View>
+
+                        <View style={styles.poiStatus}>
+                          {isSpinning ? (
+                            <ActivityIndicator size="small" color={colors.tint} style={{ marginRight: 6 }} />
+                          ) : (
+                            <SymbolView name={statusIcon} tintColor={statusColor} size={16} style={{ marginRight: 6 }} />
+                          )}
+                          <Text style={[Typography.caption1, { color: statusColor, fontWeight: '600' }]}>
+                            {statusLabel}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
               {/* Success state */}
               {isReady && (
                 <Animated.View
@@ -918,5 +1100,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: Spacing.base,
+  },
+
+  // Dynamic Researched Places styles
+  skeletonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: Spacing.md,
+  },
+  poisContainer: {
+    marginTop: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  badge: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: Radius.full,
+  },
+  poiRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  poiIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  poiInfo: {
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  poiStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });

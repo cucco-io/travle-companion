@@ -28,7 +28,7 @@ import { getAllTrips, deleteTrip, updateTripName, getAllResearchedPOIs } from '@
 import type { Trip } from '@/src/types/trip';
 import type { POI } from '@/src/types/poi';
 import { manager } from '@/src/services/api/preparationManager';
-import * as Speech from 'expo-speech';
+import { playTTSFallback, stopAudio } from '@/src/services/audio/audioPlayer';
 import { SymbolView } from 'expo-symbols';
 
 import { useAppTheme } from '@/src/theme/ThemeContext';
@@ -103,12 +103,18 @@ function TripCard({ trip, onDelete, onPress, activePrep, onStopPrep }: TripCardP
     setSwiped(false);
   }, [translateX]);
 
+  const deleteOpacity = translateX.interpolate({
+    inputRange: [-80, 0],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
   const poiCount = (trip as Trip & { poi_count?: number }).poi_count ?? trip.pois.length;
 
   return (
     <View style={cardStyles.wrapper}>
       {/* Delete reveal */}
-      <View style={[cardStyles.deleteReveal, { backgroundColor: colors.destructive }]}>
+      <Animated.View style={[cardStyles.deleteReveal, { backgroundColor: colors.destructive, opacity: deleteOpacity }]}>
         <TouchableOpacity
           style={cardStyles.deleteBtn}
           onPress={() => {
@@ -119,7 +125,7 @@ function TripCard({ trip, onDelete, onPress, activePrep, onStopPrep }: TripCardP
           <SymbolView name={Icons.trash} tintColor="#FFFFFF" size={20} />
           <Text style={cardStyles.deleteBtnText}>Delete</Text>
         </TouchableOpacity>
-      </View>
+      </Animated.View>
 
       {/* Main card */}
       <Animated.View
@@ -599,15 +605,25 @@ export default function TripsScreen() {
     if (!selectedPoi) return;
     try {
       if (isSpeaking) {
-        await Speech.stop();
+        await stopAudio();
         setIsSpeaking(false);
       } else {
         setIsSpeaking(true);
-        Speech.speak(selectedPoi.narration_text, {
-          onDone: () => setIsSpeaking(false),
-          onStopped: () => setIsSpeaking(false),
-          onError: () => setIsSpeaking(false),
-        });
+        await playTTSFallback(
+          selectedPoi.narration_text,
+          'en',
+          (status) => {
+            if (status === 'playing') {
+              setIsSpeaking(true);
+            } else if (
+              status === 'finished' ||
+              status === 'error' ||
+              status === 'paused'
+            ) {
+              setIsSpeaking(false);
+            }
+          }
+        );
       }
     } catch (err) {
       console.warn('Speech failed:', err);
@@ -618,7 +634,7 @@ export default function TripsScreen() {
   const handleClosePoiModal = useCallback(async () => {
     if (isSpeaking) {
       try {
-        await Speech.stop();
+        await stopAudio();
       } catch (e) {
         // ignore
       }
@@ -694,7 +710,7 @@ export default function TripsScreen() {
               poi={item}
               onPress={async (poi) => {
                 if (isSpeaking) {
-                  try { await Speech.stop(); } catch (e) {}
+                  try { await stopAudio(); } catch (e) {}
                   setIsSpeaking(false);
                 }
                 setSelectedPoi(poi);

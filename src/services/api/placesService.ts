@@ -339,7 +339,7 @@ function getGoogleSearchConfig(category: string): { type?: string } {
     case 'museum':
       return { type: 'museum' };
     case 'church':
-      return { type: 'place_of_worship' };
+      return { type: 'church' };
     case 'park':
       return { type: 'park' };
     case 'natural_landmark':

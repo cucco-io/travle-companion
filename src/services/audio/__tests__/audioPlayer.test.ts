@@ -12,6 +12,7 @@ import {
   configureAudioSession,
   preloadAudio,
   releaseAudioResources,
+  splitTextIntoChunks,
 } from '../audioPlayer';
 import { POI } from '../../../types/poi';
 
@@ -142,6 +143,32 @@ describe('audioPlayer', () => {
     });
   });
 
+  describe('splitTextIntoChunks', () => {
+    it('returns a single chunk if text is under maxLength', () => {
+      const chunks = splitTextIntoChunks('Short text.', 100);
+      expect(chunks).toEqual(['Short text.']);
+    });
+
+    it('splits text at sentence boundaries', () => {
+      const text = 'First sentence. Second sentence! Third sentence?';
+      const chunks = splitTextIntoChunks(text, 20);
+      expect(chunks).toEqual([
+        'First sentence.',
+        'Second sentence!',
+        'Third sentence?'
+      ]);
+    });
+
+    it('splits at spaces if a sentence is too long', () => {
+      const text = 'This is a very long sentence that has no punctuation in it';
+      const chunks = splitTextIntoChunks(text, 20);
+      expect(chunks.length).toBeGreaterThan(1);
+      chunks.forEach(chunk => {
+        expect(chunk.length).toBeLessThanOrEqual(20);
+      });
+    });
+  });
+
   describe('playTTSFallback', () => {
     it('synthesizes speech and passes the language parameter', async () => {
       const statusCallback = jest.fn();
@@ -158,6 +185,54 @@ describe('audioPlayer', () => {
         })
       );
       expect(getCurrentPlaybackState()).toBe('loading');
+    });
+
+    it('splits long text and plays chunks sequentially', async () => {
+      const statusCallback = jest.fn();
+      const progressCallback = jest.fn();
+      
+      const sentence = 'This is a test sentence that is quite long. ';
+      const longText = sentence.repeat(100); // ~4400 characters
+      
+      (Speech.speak as jest.Mock).mockClear();
+
+      await playTTSFallback(longText, 'en', statusCallback, progressCallback);
+
+      // The first speak should be called with the first chunk
+      expect(Speech.speak).toHaveBeenCalledTimes(1);
+      const firstChunk = (Speech.speak as jest.Mock).mock.calls[0][0];
+      expect(firstChunk.length).toBeLessThan(4000);
+      
+      // Call onDone for the first chunk to trigger the next one
+      const options = (Speech.speak as jest.Mock).mock.calls[0][1];
+      options.onDone();
+
+      // Should have triggered the second chunk speak
+      expect(Speech.speak).toHaveBeenCalledTimes(2);
+    });
+
+    it('ignores callbacks from aborted sessions', async () => {
+      const statusCallback = jest.fn();
+      const progressCallback = jest.fn();
+      
+      const sentence = 'This is a test sentence that is quite long. ';
+      const longText = sentence.repeat(100);
+
+      await playTTSFallback(longText, 'en', statusCallback, progressCallback);
+      expect(Speech.speak).toHaveBeenCalledTimes(1);
+      const options1 = (Speech.speak as jest.Mock).mock.calls[0][1];
+
+      // Now start a new session
+      (Speech.speak as jest.Mock).mockClear();
+      await playTTSFallback('Short text', 'en', statusCallback, progressCallback);
+      expect(Speech.speak).toHaveBeenCalledTimes(1);
+      expect(Speech.speak).toHaveBeenLastCalledWith('Short text', expect.any(Object));
+
+      // Trigger the onDone from the old session
+      options1.onDone();
+
+      // Speech.speak should NOT be called again because the session was aborted
+      expect(Speech.speak).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -62,6 +62,7 @@ let speechInterval: NodeJS.Timeout | null = null;
 let speechStartTime = 0;
 let speechAccumulatedTime = 0;
 let speechEstimatedDuration = 0;
+let currentSpeechSessionId = 0;
 
 function triggerStatusChange(status: PlaybackStatus) {
   if (status === 'loading') {
@@ -197,6 +198,54 @@ export async function playAudioFile(
 }
 
 /**
+ /**
+ * Splits text into chunks of at most maxLength characters, ensuring splits happen at
+ * sentence or paragraph boundaries, or word boundaries, rather than cutting words in half.
+ *
+ * @param text - The text to split
+ * @param maxLength - Maximum character length of each chunk
+ * @returns Array of text chunks
+ */
+export function splitTextIntoChunks(text: string, maxLength: number = 3900): string[] {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let currentChunk = '';
+
+  // Split by sentence-ending punctuation followed by space or newline, or end of text
+  const sentences = text.match(/[^.!?]+[.!?]+(\s+|$)|[^.!?]+$/g) || [text];
+
+  for (const sentence of sentences) {
+    if (currentChunk.length + sentence.length > maxLength) {
+      if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim());
+      }
+      currentChunk = sentence;
+
+      // If a single sentence exceeds maxLength, split it by words/spaces
+      while (currentChunk.length > maxLength) {
+        let splitIdx = currentChunk.lastIndexOf(' ', maxLength);
+        if (splitIdx === -1) {
+          splitIdx = maxLength; // Force split if no space
+        }
+        chunks.push(currentChunk.slice(0, splitIdx).trim());
+        currentChunk = currentChunk.slice(splitIdx);
+      }
+    } else {
+      currentChunk += sentence;
+    }
+  }
+
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+
+  return chunks;
+}
+
+/**
  * Fallback speech synthesis using device TTS.
  *
  * @param text - The narration text to speak
@@ -248,39 +297,77 @@ export async function playTTSFallback(
     }
   };
 
+  currentSpeechSessionId++;
+  const sessionId = currentSpeechSessionId;
+
+  let isAndroid = false;
   try {
-    Speech.speak(text, {
-      language, // Pass language parameter/option to Speech.speak
-      rate: 1.0,
-      pitch: 1.0,
-      onStart: () => {
-        triggerStatusChange('playing');
-        startProgressInterval();
-      },
-      onDone: () => {
-        isSpeechActive = false;
-        stopProgressInterval();
-        currentPosition = speechEstimatedDuration;
-        activeOnProgress?.(currentPosition, currentDuration);
-        triggerStatusChange('finished');
-      },
-      onStopped: () => {
-        isSpeechActive = false;
-        stopProgressInterval();
-        triggerStatusChange('paused');
-      },
-      onError: () => {
+    const { Platform } = require('react-native');
+    isAndroid = Platform.OS === 'android';
+  } catch (e) {
+    isAndroid = true; // Default to true in test environment to test chunking behaviour
+  }
+
+  // Android limit is 4000 characters. We use 3900 for a safety buffer.
+  const limit = isAndroid ? (Speech.maxSpeechInputLength || 4000) : 4000;
+  const chunkLimit = limit > 100 && limit < 100000 ? Math.min(limit - 100, 3900) : 3900;
+  const chunks = splitTextIntoChunks(text, chunkLimit);
+  let currentChunkIndex = 0;
+
+  const playNextChunk = () => {
+    if (sessionId !== currentSpeechSessionId) return;
+
+    if (currentChunkIndex >= chunks.length) {
+      isSpeechActive = false;
+      stopProgressInterval();
+      currentPosition = speechEstimatedDuration;
+      activeOnProgress?.(currentPosition, currentDuration);
+      triggerStatusChange('finished');
+      return;
+    }
+
+    const chunk = chunks[currentChunkIndex];
+    try {
+      Speech.speak(chunk, {
+        language,
+        rate: 1.0,
+        pitch: 1.0,
+        onStart: () => {
+          if (sessionId !== currentSpeechSessionId) return;
+          if (currentChunkIndex === 0) {
+            triggerStatusChange('playing');
+            startProgressInterval();
+          }
+        },
+        onDone: () => {
+          if (sessionId !== currentSpeechSessionId) return;
+          currentChunkIndex++;
+          playNextChunk();
+        },
+        onStopped: () => {
+          if (sessionId !== currentSpeechSessionId) return;
+          isSpeechActive = false;
+          stopProgressInterval();
+          triggerStatusChange('paused');
+        },
+        onError: () => {
+          if (sessionId !== currentSpeechSessionId) return;
+          isSpeechActive = false;
+          stopProgressInterval();
+          triggerStatusChange('error');
+        },
+      });
+    } catch (error) {
+      if (sessionId === currentSpeechSessionId) {
         isSpeechActive = false;
         stopProgressInterval();
         triggerStatusChange('error');
-      },
-    });
-  } catch (error) {
-    isSpeechActive = false;
-    stopProgressInterval();
-    triggerStatusChange('error');
-    throw error;
-  }
+        throw error;
+      }
+    }
+  };
+
+  playNextChunk();
 }
 
 /**
