@@ -16,6 +16,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import {
@@ -28,38 +29,18 @@ import {
 import { useNarrationPlayer } from '@/src/hooks/useNarrationPlayer';
 import type { Trip, TripLogEntry, GpsBreadcrumb } from '@/src/types/trip';
 import type { POI } from '@/src/types/poi';
+import { SymbolView } from 'expo-symbols';
 
-// ─── Palette ───────────────────────────────────────────────────────────────────
-const C = {
-  bg: '#0a0e1a',
-  surface: '#131929',
-  card: '#1a2236',
-  border: '#252f47',
-  gold: '#f5c842',
-  teal: '#2dd4bf',
-  green: '#22c55e',
-  red: '#ef4444',
-  muted: '#6b7280',
-  text: '#f1f5f9',
-  textSub: '#94a3b8',
-  amber: '#f59e0b',
-};
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-function categoryIcon(cat: POI['category']): string {
-  const map: Record<POI['category'], string> = {
-    historical_landmark: '🏛️',
-    museum: '🏛️',
-    church: '⛪',
-    park: '🌿',
-    natural_landmark: '🏔️',
-    monument: '🗿',
-    cultural_site: '🎭',
-    quirky: '🎪',
-    other: '📍',
-  };
-  return map[cat] ?? '📍';
-}
+import { useAppTheme } from '@/src/theme/ThemeContext';
+import {
+  PrimaryButton,
+  SecondaryButton,
+  DestructiveButton,
+  Badge,
+  Icon,
+} from '@/src/theme/UIComponents';
+import { Icons, getCategoryIcon, SymbolName } from '@/src/theme/icons';
+import { Typography, Spacing, Radius } from '@/src/theme/theme';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
@@ -113,24 +94,25 @@ interface POIItemProps {
 }
 
 function POIItem({ poi, logEntry, onBookmark, onReplay }: POIItemProps) {
+  const { colors } = useAppTheme();
   const [expanded, setExpanded] = useState(false);
   const played = !!logEntry && !logEntry.skipped;
   const skipped = !!logEntry && logEntry.skipped;
 
   return (
-    <View style={pStyles.item}>
+    <View style={[pStyles.item, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
       {/* Header row */}
       <TouchableOpacity
         style={pStyles.headerRow}
         onPress={() => setExpanded((v) => !v)}
         activeOpacity={0.7}
       >
-        <Text style={pStyles.icon}>{categoryIcon(poi.category)}</Text>
+        <Icon name={getCategoryIcon(poi.category)} size={20} color={colors.textSecondary} style={{ marginRight: Spacing.sm }} />
         <View style={{ flex: 1 }}>
-          <Text style={pStyles.name} numberOfLines={expanded ? undefined : 1}>
+          <Text style={[Typography.subheadline, { fontWeight: '600', color: colors.textPrimary }]} numberOfLines={expanded ? undefined : 1}>
             {poi.name}
           </Text>
-          <Text style={pStyles.meta}>
+          <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2, textTransform: 'capitalize' }]}>
             {poi.category.replace(/_/g, ' ')} · {poi.estimated_listen_minutes.toFixed(0)} min
             {logEntry
               ? ` · ${new Date(logEntry.played_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
@@ -138,42 +120,47 @@ function POIItem({ poi, logEntry, onBookmark, onReplay }: POIItemProps) {
           </Text>
         </View>
         {/* Status badge */}
-        <View
-          style={[
-            pStyles.badge,
-            played && pStyles.badgePlayed,
-            skipped && pStyles.badgeSkipped,
-          ]}
-        >
-          <Text style={pStyles.badgeText}>
-            {played ? '✓ Played' : skipped ? '⏭ Skipped' : '○ Unvisited'}
-          </Text>
-        </View>
+        <Badge
+          label={played ? 'Played' : skipped ? 'Skipped' : 'Unvisited'}
+          color={colors.backgroundElevated}
+          backgroundColor={played ? colors.success : skipped ? colors.textSecondary : colors.fillSecondary}
+        />
       </TouchableOpacity>
 
       {/* Expanded narration */}
       {expanded && (
-        <View style={pStyles.narrationBox}>
-          <Text style={pStyles.narrationText}>{poi.narration_text}</Text>
+        <View style={[pStyles.narrationBox, { backgroundColor: colors.fillTertiary, borderTopColor: colors.separator, borderBottomColor: colors.separator, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth }]}>
+          <Text style={[Typography.body, { color: colors.textPrimary, lineHeight: 22 }]}>{poi.narration_text}</Text>
         </View>
       )}
 
       {/* Actions */}
-      <View style={pStyles.actionRow}>
+      <View style={[pStyles.actionRow, { borderTopColor: colors.separator }]}>
         <TouchableOpacity
-          style={pStyles.actionBtn}
+          style={[pStyles.actionBtn, { backgroundColor: colors.fillTertiary }]}
           onPress={() => onBookmark(poi)}
         >
-          <Text style={[pStyles.actionBtnText, poi.bookmarked && pStyles.bookmarked]}>
-            {poi.bookmarked ? '★ Bookmarked' : '☆ Bookmark'}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <SymbolView
+              name={poi.bookmarked ? Icons.bookmarkFilled : Icons.bookmark}
+              tintColor={poi.bookmarked ? colors.warning : colors.textSecondary}
+              size={14}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[Typography.footnote, { fontWeight: '600', color: poi.bookmarked ? colors.warning : colors.textSecondary }]}>
+              {poi.bookmarked ? 'Bookmarked' : 'Bookmark'}
+            </Text>
+          </View>
         </TouchableOpacity>
         {(played || skipped) && (
           <TouchableOpacity
-            style={[pStyles.actionBtn, pStyles.replayBtn]}
+            style={[pStyles.actionBtn, { backgroundColor: colors.tint + '15' }]}
             onPress={() => onReplay(poi)}
           >
-            <Text style={pStyles.replayText}>↺ Replay</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <SymbolView name={Icons.replay} tintColor={colors.tint} size={14} style={{ marginRight: 6 }} />
+              <Text style={[Typography.footnote, { fontWeight: '600', color: colors.tint }]}>Replay</Text>
+            </View>
           </TouchableOpacity>
         )}
       </View>
@@ -183,62 +170,39 @@ function POIItem({ poi, logEntry, onBookmark, onReplay }: POIItemProps) {
 
 const pStyles = StyleSheet.create({
   item: {
-    backgroundColor: '#1a2236',
-    borderRadius: 12,
-    marginBottom: 10,
+    borderRadius: Radius.lg,
+    marginBottom: Spacing.sm,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#252f47',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
-    gap: 10,
+    padding: Spacing.base,
   },
-  icon: { fontSize: 22, width: 28, textAlign: 'center' },
-  name: { fontSize: 15, fontWeight: '600', color: '#f1f5f9' },
-  meta: { fontSize: 12, color: '#94a3b8', marginTop: 2 },
-  badge: {
-    backgroundColor: '#252f47',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  badgePlayed: { backgroundColor: '#14532d' },
-  badgeSkipped: { backgroundColor: '#1c1917' },
-  badgeText: { fontSize: 11, color: '#94a3b8', fontWeight: '600' },
   narrationBox: {
-    borderTopWidth: 1,
-    borderTopColor: '#252f47',
-    padding: 14,
-    backgroundColor: '#131929',
+    padding: Spacing.base,
   },
-  narrationText: { fontSize: 14, color: '#cbd5e1', lineHeight: 22 },
   actionRow: {
     flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: '#252f47',
-    padding: 10,
-    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    padding: Spacing.sm,
+    gap: Spacing.sm,
   },
   actionBtn: {
     flex: 1,
-    backgroundColor: '#252f47',
-    borderRadius: 8,
-    paddingVertical: 8,
+    borderRadius: Radius.sm,
+    paddingVertical: Spacing.sm,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  actionBtnText: { fontSize: 13, color: '#94a3b8', fontWeight: '600' },
-  bookmarked: { color: '#f5c842' },
-  replayBtn: { backgroundColor: '#1e3a5f' },
-  replayText: { fontSize: 13, color: '#2dd4bf', fontWeight: '600' },
 });
 
 // ─── Main screen ───────────────────────────────────────────────────────────────
 export default function TripReviewScreen() {
   const params = useLocalSearchParams<{ tripId?: string }>();
   const tripId = params.tripId ?? '';
+  const { colors, colorScheme } = useAppTheme();
 
   const [trip, setTrip] = useState<Trip | null>(null);
   const [log, setLog] = useState<TripLogEntry[]>([]);
@@ -289,7 +253,7 @@ export default function TripReviewScreen() {
   const handleReplay = useCallback((poi: POI) => {
     narration.enqueue(poi);
     Alert.alert('Replaying', `Now playing: ${poi.name}`);
-  }, [narration.enqueue]);
+  }, [narration]);
 
   const handleShare = useCallback(async () => {
     if (!trip) return;
@@ -339,21 +303,20 @@ export default function TripReviewScreen() {
   // ── Loading / error ────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <View style={[s.container, s.center]}>
+      <View style={[s.container, s.center, { backgroundColor: colors.background }]}>
         <Stack.Screen options={{ title: 'Trip Review' }} />
-        <Text style={s.muted}>Loading trip…</Text>
+        <ActivityIndicator size="large" color={colors.tint} />
+        <Text style={[Typography.body, { color: colors.textSecondary, marginTop: Spacing.base }]}>Loading trip review…</Text>
       </View>
     );
   }
 
   if (!trip) {
     return (
-      <View style={[s.container, s.center]}>
+      <View style={[s.container, s.center, { backgroundColor: colors.background }]}>
         <Stack.Screen options={{ title: 'Trip Review' }} />
-        <Text style={s.errorText}>Trip not found.</Text>
-        <TouchableOpacity onPress={handleDone} style={s.btn}>
-          <Text style={s.btnText}>Back to Trips</Text>
-        </TouchableOpacity>
+        <Text style={[Typography.body, { color: colors.destructive, marginBottom: Spacing.xl }]}>Trip not found.</Text>
+        <SecondaryButton title="Back to Trips" onPress={handleDone} />
       </View>
     );
   }
@@ -366,8 +329,8 @@ export default function TripReviewScreen() {
   const logMap = new Map<string, TripLogEntry>(log.map((e) => [e.poi_id, e]));
 
   return (
-    <View style={s.container}>
-      <StatusBar barStyle="light-content" />
+    <View style={[s.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} />
       <Stack.Screen options={{ title: 'Trip Review' }} />
 
       <ScrollView
@@ -376,69 +339,81 @@ export default function TripReviewScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* ── Trip header ──────────────────────────────────────────────── */}
-        <View style={s.tripHeader}>
-          <Text style={s.tripName}>{trip.name}</Text>
-          <Text style={s.tripDest}>📍 {trip.destination.name}</Text>
-          <Text style={s.tripDate}>
+        <View style={[s.tripHeader, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+          <Text style={[Typography.title2, { color: colors.textPrimary, textAlign: 'center', marginBottom: Spacing.xs }]}>{trip.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.xs }}>
+            <SymbolView name={Icons.mappin} tintColor={colors.textSecondary} size={14} style={{ marginRight: 4 }} />
+            <Text style={[Typography.subheadline, { color: colors.textSecondary }]}>{trip.destination.name}</Text>
+          </View>
+          <Text style={[Typography.caption2, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
             {formatDate(trip.created_at)}
             {trip.completed_at
               ? ` → ${formatDate(trip.completed_at)}`
               : ''}
           </Text>
-          <View
-            style={[s.statusBadge, trip.status === 'completed' && s.statusCompleted]}
-          >
-            <Text style={s.statusText}>{trip.status.toUpperCase()}</Text>
-          </View>
+          <Badge
+            label={trip.status.toUpperCase()}
+            color={colors.backgroundElevated}
+            backgroundColor={trip.status === 'completed' ? colors.success : colors.tint}
+          />
         </View>
 
         {/* ── Stats grid ──────────────────────────────────────────────── */}
         <View style={s.statsGrid}>
-          <StatCard label="POIs Total" value={String(trip.pois.length)} icon="📍" />
-          <StatCard label="Listened" value={String(playedCount)} icon="🎧" />
-          <StatCard label="Skipped" value={String(skippedCount)} icon="⏭" />
+          <StatCard label="POIs Total" value={String(trip.pois.length)} icon={Icons.mappin} />
+          <StatCard label="Listened" value={String(playedCount)} icon={Icons.headphones} />
+          <StatCard label="Skipped" value={String(skippedCount)} icon={Icons.skipForward} />
           <StatCard
             label="Listen Time"
             value={`${totalMins.toFixed(0)}m`}
-            icon="⏱"
+            icon={Icons.clock}
           />
           <StatCard
             label="Distance"
             value={distKm > 0 ? `${distKm.toFixed(1)} km` : '—'}
-            icon="🛣"
+            icon={Icons.route}
           />
           <StatCard
             label="Duration"
             value={formatDuration(trip.started_at, trip.completed_at)}
-            icon="🕐"
+            icon={Icons.calendar}
           />
         </View>
 
         {/* ── GPS breadcrumb trail summary ─────────────────────────────── */}
         <View style={s.section}>
-          <Text style={s.sectionTitle}>GPS Trail</Text>
+          <Text style={[Typography.caption2, { color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: Spacing.sm }]}>GPS Trail</Text>
           {breadcrumbs.length === 0 ? (
-            <Text style={s.muted}>No GPS breadcrumbs recorded.</Text>
+            <Text style={[Typography.body, { color: colors.textTertiary }]}>No GPS breadcrumbs recorded.</Text>
           ) : (
-            <View style={s.trailBox}>
-              <Text style={s.trailText}>
-                🛣 {breadcrumbs.length} waypoints recorded
-              </Text>
-              <Text style={s.trailText}>
-                📏 Distance: {distKm > 0 ? `${distKm.toFixed(2)} km` : '—'}
-              </Text>
-              {breadcrumbs[0] && (
-                <Text style={s.trailText}>
-                  🟢 Start: {breadcrumbs[0].lat.toFixed(5)},{' '}
-                  {breadcrumbs[0].lng.toFixed(5)}
+            <View style={[s.trailBox, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+              <View style={s.trailRow}>
+                <SymbolView name={Icons.route} tintColor={colors.tint} size={14} style={{ marginRight: 6 }} />
+                <Text style={[Typography.body, { color: colors.textPrimary }]}>
+                  {breadcrumbs.length} waypoints recorded
                 </Text>
+              </View>
+              <View style={s.trailRow}>
+                <SymbolView name={Icons.ruler} tintColor={colors.tint} size={14} style={{ marginRight: 6 }} />
+                <Text style={[Typography.body, { color: colors.textPrimary }]}>
+                  Distance: {distKm > 0 ? `${distKm.toFixed(2)} km` : '—'}
+                </Text>
+              </View>
+              {breadcrumbs[0] && (
+                <View style={s.trailRow}>
+                  <SymbolView name={Icons.circle} tintColor={colors.success} size={14} style={{ marginRight: 6 }} />
+                  <Text style={[Typography.footnote, { color: colors.textSecondary }]}>
+                    Start: {breadcrumbs[0].lat.toFixed(5)}, {breadcrumbs[0].lng.toFixed(5)}
+                  </Text>
+                </View>
               )}
               {breadcrumbs[breadcrumbs.length - 1] && (
-                <Text style={s.trailText}>
-                  🔴 End:{' '}
-                  {breadcrumbs[breadcrumbs.length - 1].lat.toFixed(5)},{' '}
-                  {breadcrumbs[breadcrumbs.length - 1].lng.toFixed(5)}
-                </Text>
+                <View style={s.trailRow}>
+                  <SymbolView name={Icons.circle} tintColor={colors.destructive} size={14} style={{ marginRight: 6 }} />
+                  <Text style={[Typography.footnote, { color: colors.textSecondary }]}>
+                    End: {breadcrumbs[breadcrumbs.length - 1].lat.toFixed(5)}, {breadcrumbs[breadcrumbs.length - 1].lng.toFixed(5)}
+                  </Text>
+                </View>
               )}
             </View>
           )}
@@ -446,7 +421,7 @@ export default function TripReviewScreen() {
 
         {/* ── POI list ────────────────────────────────────────────────── */}
         <View style={s.section}>
-          <Text style={s.sectionTitle}>Points of Interest</Text>
+          <Text style={[Typography.caption2, { color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: Spacing.sm }]}>Points of Interest</Text>
           {trip.pois.map((poi) => (
             <POIItem
               key={poi.id}
@@ -457,156 +432,97 @@ export default function TripReviewScreen() {
             />
           ))}
           {trip.pois.length === 0 && (
-            <Text style={s.muted}>No POIs in this trip.</Text>
+            <Text style={[Typography.body, { color: colors.textTertiary }]}>No POIs in this trip.</Text>
           )}
         </View>
 
         {/* ── Actions ─────────────────────────────────────────────────── */}
-        <View style={s.actionRow}>
-          <TouchableOpacity style={s.shareBtn} onPress={handleShare}>
-            <Text style={s.shareBtnText}>↗ Share Trip</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.deleteBtn} onPress={handleDelete}>
-            <Text style={s.deleteBtnText}>🗑 Delete</Text>
-          </TouchableOpacity>
+        <View style={s.actionGrid}>
+          <SecondaryButton
+            title="Share Trip"
+            icon={Icons.share}
+            onPress={handleShare}
+            style={{ flex: 1 }}
+          />
+          <DestructiveButton
+            title="Delete"
+            icon={Icons.trash}
+            onPress={handleDelete}
+            style={{ flex: 1 }}
+          />
         </View>
-        <TouchableOpacity style={s.doneBtn} onPress={handleDone}>
-          <Text style={s.doneBtnText}>Done</Text>
-        </TouchableOpacity>
+        <PrimaryButton
+          title="Done"
+          icon={Icons.checkmark}
+          onPress={handleDone}
+          style={{ marginTop: Spacing.md }}
+        />
       </ScrollView>
     </View>
   );
 }
 
 // ─── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ label, value, icon }: { label: string; value: string; icon: string }) {
+function StatCard({ label, value, icon }: { label: string; value: string; icon: SymbolName }) {
+  const { colors } = useAppTheme();
   return (
-    <View style={s.statCard}>
-      <Text style={s.statCardIcon}>{icon}</Text>
-      <Text style={s.statCardValue}>{value}</Text>
-      <Text style={s.statCardLabel}>{label}</Text>
+    <View style={[s.statCard, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+      <SymbolView name={icon} tintColor={colors.tint} size={20} style={{ marginBottom: Spacing.xs }} />
+      <Text style={[Typography.headline, { color: colors.textPrimary, fontWeight: '700' }]}>{value}</Text>
+      <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2, textAlign: 'center' }]}>{label}</Text>
     </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg },
-  center: { alignItems: 'center', justifyContent: 'center' },
-  scrollContent: { padding: 16, paddingBottom: 40 },
+  container: { flex: 1 },
+  center: { alignItems: 'center', justifyContent: 'center', padding: Spacing.xl },
+  scrollContent: { padding: Spacing.base, paddingBottom: Spacing.xl * 2 },
 
   // Trip header
   tripHeader: {
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: C.border,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    marginBottom: Spacing.base,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
   },
-  tripName: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: C.text,
-    textAlign: 'center',
-    marginBottom: 6,
-  },
-  tripDest: { fontSize: 15, color: C.textSub, marginBottom: 4 },
-  tripDate: { fontSize: 13, color: C.muted, marginBottom: 12 },
-  statusBadge: {
-    backgroundColor: C.muted,
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  statusCompleted: { backgroundColor: '#14532d' },
-  statusText: { fontSize: 12, fontWeight: '700', color: '#fff' },
 
   // Stats grid
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 16,
+    gap: Spacing.sm,
+    marginBottom: Spacing.base,
   },
   statCard: {
-    backgroundColor: C.card,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
     alignItems: 'center',
     width: '30%',
     flexGrow: 1,
-    borderWidth: 1,
-    borderColor: C.border,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  statCardIcon: { fontSize: 20, marginBottom: 4 },
-  statCardValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: C.gold,
-  },
-  statCardLabel: { fontSize: 11, color: C.textSub, marginTop: 2, textAlign: 'center' },
 
   // Section
-  section: { marginBottom: 16 },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: C.textSub,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 10,
-  },
+  section: { marginBottom: Spacing.base },
 
   // GPS Trail
   trailBox: {
-    backgroundColor: C.card,
-    borderRadius: 12,
-    padding: 14,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: C.border,
+    borderRadius: Radius.lg,
+    padding: Spacing.base,
+    gap: Spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  trailText: { fontSize: 14, color: C.text },
+  trailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
 
   // Actions
-  actionRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  shareBtn: {
-    flex: 1,
-    backgroundColor: C.teal,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
+  actionGrid: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
   },
-  shareBtnText: { color: '#000', fontWeight: '700', fontSize: 15 },
-  deleteBtn: {
-    flex: 1,
-    backgroundColor: '#1f1f1f',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: C.red,
-  },
-  deleteBtnText: { color: C.red, fontWeight: '700', fontSize: 15 },
-  doneBtn: {
-    backgroundColor: C.gold,
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  doneBtnText: { color: '#000', fontWeight: '800', fontSize: 17 },
-
-  // misc
-  muted: { color: C.muted, fontSize: 14 },
-  errorText: { color: C.red, fontSize: 16, marginBottom: 20 },
-  btn: {
-    backgroundColor: C.teal,
-    borderRadius: 10,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-  },
-  btnText: { color: '#000', fontWeight: '700', fontSize: 15 },
 });

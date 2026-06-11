@@ -2,10 +2,12 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 export interface AppSettings {
   ttsProvider: 'gemini' | 'device';
+  themePreference?: 'system' | 'light' | 'dark';
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   ttsProvider: 'gemini',
+  themePreference: 'system',
 };
 
 const SETTINGS_FILE_PATH = `${FileSystem.documentDirectory}settings.json`;

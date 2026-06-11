@@ -2,9 +2,10 @@ import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
+import { StatusBar } from 'react-native';
 import 'react-native-reanimated';
 
-import { useColorScheme } from '@/components/useColorScheme';
+import { AppThemeProvider, useAppTheme } from '@/src/theme/ThemeContext';
 import { initializeDatabase } from '@/src/services/storage/tripStorage';
 import { configureAudioSession } from '@/src/services/audio/audioPlayer';
 
@@ -56,15 +57,28 @@ export default function RootLayout() {
     return null;
   }
 
-  return <RootLayoutNav />;
+  return (
+    <AppThemeProvider>
+      <RootLayoutNav />
+    </AppThemeProvider>
+  );
 }
 
 function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+  const { colorScheme, colors } = useAppTheme();
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} />
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: colors.backgroundElevated },
+          headerTintColor: colors.tint,
+          headerTitleStyle: { color: colors.textPrimary },
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="trip/prepare" options={{ title: 'Prepare Trip' }} />
         <Stack.Screen name="trip/active" options={{ title: 'Active Trip', headerBackVisible: false }} />

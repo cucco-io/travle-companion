@@ -9,15 +9,15 @@ let InterruptionModeAndroid: any = { DuckOthers: 2 };
 
 try {
   const ExpoAV = require('expo-av');
-  Audio = ExpoAV.Audio;
-  if (ExpoAV.InterruptionModeIOS) {
+  Audio = ExpoAV?.Audio || null;
+  if (ExpoAV?.InterruptionModeIOS) {
     InterruptionModeIOS = ExpoAV.InterruptionModeIOS;
   }
-  if (ExpoAV.InterruptionModeAndroid) {
+  if (ExpoAV?.InterruptionModeAndroid) {
     InterruptionModeAndroid = ExpoAV.InterruptionModeAndroid;
   }
 } catch (error) {
-  console.warn('[audioPlayer] expo-av is not available in this environment. Audio playback will be disabled.', error);
+  console.warn('⚠️ [audioPlayer] Failed to load expo-av module dynamically. Fallback to TTS will be used:', error);
 }
 
 /**
@@ -399,4 +399,11 @@ export async function releaseAudioResources(): Promise<void> {
     }
   }
   preloadedSounds.clear();
+}
+
+/**
+ * Returns whether the native audio module (expo-av) is available in this environment.
+ */
+export function isAudioAvailable(): boolean {
+  return !!Audio;
 }
