@@ -21,41 +21,29 @@ import {
   Modal,
   TextInput,
   Image,
+  Platform,
 } from 'react-native';
-import { router } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { getAllTrips, deleteTrip, updateTripName, getAllResearchedPOIs } from '@/src/services/storage/tripStorage';
-import type { Trip, TripStatus } from '@/src/types/trip';
+import type { Trip } from '@/src/types/trip';
 import type { POI } from '@/src/types/poi';
 import { manager } from '@/src/services/api/preparationManager';
-import * as Speech from 'expo-speech';
+import { playTTSFallback, stopAudio } from '@/src/services/audio/audioPlayer';
+import { SymbolView } from 'expo-symbols';
 
-// ─── Palette ────────────────────────────────────────────────────────────────────
-const C = {
-  bg: '#0a0e1a',
-  surface: '#131929',
-  card: '#1a2236',
-  border: '#252f47',
-  gold: '#f5c842',
-  teal: '#2dd4bf',
-  green: '#22c55e',
-  red: '#ef4444',
-  amber: '#f59e0b',
-  blue: '#3b82f6',
-  muted: '#6b7280',
-  text: '#f1f5f9',
-  textSub: '#94a3b8',
-};
-
-// ─── Status badge config ────────────────────────────────────────────────────────
-const STATUS_CONFIG: Record<
-  TripStatus,
-  { label: string; color: string; bg: string }
-> = {
-  preparing: { label: 'Preparing', color: '#000', bg: C.amber },
-  ready: { label: 'Ready', color: '#fff', bg: C.blue },
-  active: { label: 'Active', color: '#000', bg: C.green },
-  completed: { label: 'Completed', color: C.textSub, bg: '#1e293b' },
-};
+import { useAppTheme } from '@/src/theme/ThemeContext';
+import {
+  GroupedSection,
+  GroupedRow,
+  PrimaryButton,
+  SecondaryButton,
+  DestructiveButton,
+  SegmentedControl,
+  Badge,
+  Icon,
+} from '@/src/theme/UIComponents';
+import { Icons, getCategoryIcon } from '@/src/theme/icons';
+import { Typography, Spacing, Radius } from '@/src/theme/theme';
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -75,6 +63,7 @@ interface TripCardProps {
 }
 
 function TripCard({ trip, onDelete, onPress, activePrep, onStopPrep }: TripCardProps) {
+  const { colors } = useAppTheme();
   const translateX = useRef(new Animated.Value(0)).current;
   const [swiped, setSwiped] = useState(false);
 
@@ -114,86 +103,117 @@ function TripCard({ trip, onDelete, onPress, activePrep, onStopPrep }: TripCardP
     setSwiped(false);
   }, [translateX]);
 
-  const statusCfg = STATUS_CONFIG[trip.status];
+  const deleteOpacity = translateX.interpolate({
+    inputRange: [-80, 0],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
   const poiCount = (trip as Trip & { poi_count?: number }).poi_count ?? trip.pois.length;
 
   return (
-    <View style={card.wrapper}>
+    <View style={cardStyles.wrapper}>
       {/* Delete reveal */}
-      <View style={card.deleteReveal}>
+      <Animated.View style={[cardStyles.deleteReveal, { backgroundColor: colors.destructive, opacity: deleteOpacity }]}>
         <TouchableOpacity
-          style={card.deleteBtn}
+          style={cardStyles.deleteBtn}
           onPress={() => {
             closeSwipe();
             onDelete(trip.id, trip.name);
           }}
         >
-          <Text style={card.deleteBtnText}>🗑{'\n'}Delete</Text>
+          <SymbolView name={Icons.trash} tintColor="#FFFFFF" size={20} />
+          <Text style={cardStyles.deleteBtnText}>Delete</Text>
         </TouchableOpacity>
-      </View>
+      </Animated.View>
 
       {/* Main card */}
       <Animated.View
-        style={[card.card, { transform: [{ translateX }] }]}
+        style={[
+          cardStyles.card,
+          {
+            transform: [{ translateX }],
+            backgroundColor: colors.cardBackground,
+            borderColor: colors.cardBorder,
+          },
+        ]}
         {...panResponder.panHandlers}
       >
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => {
-            if (swiped) { closeSwipe(); return; }
+            if (swiped) {
+              closeSwipe();
+              return;
+            }
             onPress(trip);
           }}
-          style={card.inner}
+          style={cardStyles.inner}
         >
           {/* Top row: name + status */}
-          <View style={card.topRow}>
-            <Text style={card.name} numberOfLines={1}>
+          <View style={cardStyles.topRow}>
+            <Text style={[cardStyles.name, { color: colors.textPrimary }]} numberOfLines={1}>
               {trip.name}
             </Text>
             {activePrep ? (
-              <View style={[card.badge, { backgroundColor: C.gold }]}>
-                <Text style={[card.badgeText, { color: '#000' }]}>
-                  ⚡ Researching
-                </Text>
-              </View>
+              <Badge
+                label="Researching"
+                color={colors.backgroundElevated}
+                backgroundColor={colors.warning}
+              />
             ) : trip.status === 'preparing' ? (
-              <View style={[card.badge, { backgroundColor: C.amber }]}>
-                <Text style={[card.badgeText, { color: '#000' }]}>
-                  ⚠️ Interrupted
-                </Text>
-              </View>
+              <Badge
+                label="Interrupted"
+                color={colors.backgroundElevated}
+                backgroundColor={colors.destructive}
+              />
+            ) : trip.status === 'ready' ? (
+              <Badge
+                label="Ready"
+                color={colors.backgroundElevated}
+                backgroundColor={colors.success}
+              />
+            ) : trip.status === 'active' ? (
+              <Badge
+                label="Active"
+                color={colors.backgroundElevated}
+                backgroundColor={colors.tint}
+              />
             ) : (
-              <View style={[card.badge, { backgroundColor: statusCfg.bg }]}>
-                <Text style={[card.badgeText, { color: statusCfg.color }]}>
-                  {statusCfg.label}
-                </Text>
-              </View>
+              <Badge
+                label="Completed"
+                color={colors.textSecondary}
+                backgroundColor={colors.fillSecondary}
+              />
             )}
           </View>
 
           {/* Destination */}
-          <Text style={card.dest} numberOfLines={1}>
-            📍 {trip.destination.name}
-          </Text>
+          <View style={cardStyles.destRow}>
+            <SymbolView name={Icons.mappin} tintColor={colors.textSecondary} size={13} style={{ marginRight: 4 }} />
+            <Text style={[cardStyles.dest, { color: colors.textSecondary }]} numberOfLines={1}>
+              {trip.destination.name}
+            </Text>
+          </View>
 
           {/* Active Preparation Progress Bar */}
           {activePrep && (
-            <View style={card.progressWrapper}>
-              <Text style={card.progressStatusText} numberOfLines={1}>
+            <View style={cardStyles.progressWrapper}>
+              <Text style={[cardStyles.progressStatusText, { color: colors.tint }]} numberOfLines={1}>
                 {activePrep.statusMessage}
               </Text>
-              <View style={card.progressContainer}>
-                <View style={card.progressTrack}>
-                  <View style={[card.progressFill, { width: `${Math.round(activePrep.progress * 100)}%` }]} />
+              <View style={cardStyles.progressContainer}>
+                <View style={[cardStyles.progressTrack, { backgroundColor: colors.fillSecondary }]}>
+                  <View style={[cardStyles.progressFill, { width: `${Math.round(activePrep.progress * 100)}%`, backgroundColor: colors.tint }]} />
                 </View>
-                <Text style={card.progressPctText}>{Math.round(activePrep.progress * 100)}%</Text>
+                <Text style={[cardStyles.progressPctText, { color: colors.textPrimary }]}>{Math.round(activePrep.progress * 100)}%</Text>
                 {onStopPrep && (
                   <TouchableOpacity
-                    style={card.stopButton}
+                    style={[cardStyles.stopButton, { backgroundColor: colors.destructive }]}
                     onPress={() => onStopPrep(trip.id)}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
-                    <Text style={card.stopButtonText}>🛑 Stop</Text>
+                    <Text style={cardStyles.stopButtonText}>Stop</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -202,28 +222,42 @@ function TripCard({ trip, onDelete, onPress, activePrep, onStopPrep }: TripCardP
 
           {/* Bottom meta row */}
           {!activePrep && (
-            <View style={card.metaRow}>
-              <Text style={card.meta}>🗓 {formatDate(trip.created_at)}</Text>
-              <Text style={card.meta}>
-                📌 {poiCount} POI{poiCount !== 1 ? 's' : ''}
-              </Text>
-              <Text style={card.meta}>
-                {trip.mode === 'route' ? '🚗 Route' : '🏙 City'}
-              </Text>
+            <View style={cardStyles.metaRow}>
+              <View style={cardStyles.metaItem}>
+                <SymbolView name={Icons.calendar} tintColor={colors.textTertiary} size={11} style={{ marginRight: 3 }} />
+                <Text style={[cardStyles.metaText, { color: colors.textTertiary }]}>{formatDate(trip.created_at)}</Text>
+              </View>
+              <View style={cardStyles.metaItem}>
+                <SymbolView name={Icons.mappinCircle} tintColor={colors.textTertiary} size={11} style={{ marginRight: 3 }} />
+                <Text style={[cardStyles.metaText, { color: colors.textTertiary }]}>
+                  {poiCount} POI{poiCount !== 1 ? 's' : ''}
+                </Text>
+              </View>
+              <View style={cardStyles.metaItem}>
+                <SymbolView name={trip.mode === 'route' ? Icons.route : Icons.city} tintColor={colors.textTertiary} size={11} style={{ marginRight: 3 }} />
+                <Text style={[cardStyles.metaText, { color: colors.textTertiary }]}>
+                  {trip.mode === 'route' ? 'Route' : 'City'}
+                </Text>
+              </View>
             </View>
           )}
 
           {/* Navigate hint */}
-          <Text style={card.chevron}>›</Text>
+          <SymbolView
+            name={Icons.chevronRight}
+            tintColor={colors.textQuaternary}
+            size={14}
+            style={cardStyles.chevron}
+          />
         </TouchableOpacity>
       </Animated.View>
     </View>
   );
 }
 
-const card = StyleSheet.create({
+const cardStyles = StyleSheet.create({
   wrapper: {
-    marginBottom: 12,
+    marginBottom: Spacing.sm + 2,
     position: 'relative',
   },
   deleteReveal: {
@@ -232,247 +266,211 @@ const card = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: 80,
-    backgroundColor: C.red,
-    borderRadius: 14,
+    borderRadius: Radius.lg,
     justifyContent: 'center',
     alignItems: 'center',
   },
   deleteBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 10,
+    width: '100%',
+    height: '100%',
+    padding: Spacing.sm,
   },
   deleteBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 11,
+    marginTop: 4,
     textAlign: 'center',
   },
   card: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
   inner: {
-    padding: 16,
+    padding: Spacing.base,
   },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    marginBottom: Spacing.xs,
+    paddingRight: Spacing.md,
   },
   name: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: C.text,
+    ...Typography.headline,
     flex: 1,
-    marginRight: 8,
+    marginRight: Spacing.sm,
   },
-  badge: {
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  destRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    paddingRight: Spacing.md,
   },
-  badgeText: { fontSize: 11, fontWeight: '700' },
   dest: {
-    fontSize: 13,
-    color: C.textSub,
-    marginBottom: 10,
+    ...Typography.footnote,
+    flex: 1,
   },
   metaRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: Spacing.md,
+    alignItems: 'center',
   },
-  meta: { fontSize: 12, color: C.muted },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaText: {
+    ...Typography.caption2,
+  },
   chevron: {
     position: 'absolute',
-    right: 14,
-    bottom: 14,
-    fontSize: 22,
-    color: C.muted,
+    right: Spacing.base,
+    top: '50%',
+    marginTop: -7,
   },
   progressWrapper: {
-    marginTop: 4,
-    marginBottom: 8,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.sm,
   },
   progressStatusText: {
-    fontSize: 12,
-    color: C.teal,
+    ...Typography.caption2,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: Spacing.xs,
   },
   progressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: Spacing.sm,
   },
   progressTrack: {
     flex: 1,
     height: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 3,
     overflow: 'hidden',
   },
   progressFill: {
     height: 6,
-    backgroundColor: C.teal,
     borderRadius: 3,
   },
   progressPctText: {
-    fontSize: 11,
-    color: '#fff',
+    ...Typography.caption2,
     fontWeight: '700',
-    width: 30,
+    width: 28,
     textAlign: 'right',
   },
   stopButton: {
-    backgroundColor: C.red,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginLeft: 4,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    marginLeft: Spacing.xs,
   },
   stopButtonText: {
-    color: '#fff',
-    fontSize: 10,
+    color: '#FFFFFF',
+    ...Typography.caption2,
     fontWeight: '800',
   },
 });
 
 // ─── Empty state ────────────────────────────────────────────────────────────────
 function EmptyState() {
+  const router = useRouter();
+  const { colors } = useAppTheme();
   return (
-    <View style={empty.container}>
-      <Text style={empty.globe}>🌍</Text>
-      <Text style={empty.title}>No Trips Yet</Text>
-      <Text style={empty.subtitle}>
-        Your travel adventures will appear here.{'\n'}
+    <View style={emptyStyles.container}>
+      <Icon name={Icons.globe} size={64} color={colors.textQuaternary} style={{ marginBottom: Spacing.base }} />
+      <Text style={[Typography.title2, { color: colors.textPrimary, marginBottom: Spacing.sm }]}>No Trips Yet</Text>
+      <Text style={[Typography.body, { color: colors.textSecondary, textAlign: 'center', marginBottom: Spacing.xl }]}>
+        Your travel adventures will appear here.{"\n"}
         Start by exploring a destination!
       </Text>
-      <TouchableOpacity
-        style={empty.cta}
+      <PrimaryButton
+        title="Explore Destinations"
+        icon={Icons.compass}
         onPress={() => router.push('/(tabs)')}
-      >
-        <Text style={empty.ctaText}>✈️  Explore Destinations</Text>
-      </TouchableOpacity>
+        style={{ paddingHorizontal: Spacing.xl }}
+      />
     </View>
   );
 }
 
-const empty = StyleSheet.create({
+const emptyStyles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 40,
-    paddingBottom: 80,
+    paddingHorizontal: Spacing.xl * 2,
+    paddingTop: Spacing['3xl'],
+    paddingBottom: Spacing['3xl'] * 2,
   },
-  globe: { fontSize: 72, marginBottom: 16 },
-  title: { fontSize: 22, fontWeight: '800', color: C.text, marginBottom: 10 },
-  subtitle: {
-    fontSize: 15,
-    color: C.textSub,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 28,
-  },
-  cta: {
-    backgroundColor: C.gold,
-    borderRadius: 14,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-  },
-  ctaText: { fontSize: 16, fontWeight: '700', color: '#000' },
 });
 
-function categoryIcon(cat: POI['category']): string {
-  const map: Record<POI['category'], string> = {
-    historical_landmark: '🏛️',
-    museum: '🏛️',
-    church: '⛪',
-    park: '🌿',
-    natural_landmark: '🏔️',
-    monument: '🗿',
-    cultural_site: '🎭',
-    quirky: '🎪',
-    other: '📍',
-  };
-  return map[cat] ?? '📍';
-}
-
 function PlaceCard({ poi, onPress }: { poi: POI; onPress: (poi: POI) => void }) {
+  const { colors } = useAppTheme();
   return (
     <TouchableOpacity
       activeOpacity={0.8}
       onPress={() => onPress(poi)}
-      style={placeCard.card}
+      style={[
+        placeCardStyles.card,
+        {
+          backgroundColor: colors.cardBackground,
+          borderColor: colors.cardBorder,
+        },
+      ]}
     >
-      <Text style={placeCard.icon}>{categoryIcon(poi.category)}</Text>
-      <View style={placeCard.content}>
-        <Text style={placeCard.name} numberOfLines={1}>{poi.name}</Text>
-        <Text style={placeCard.details}>
+      <View style={[placeCardStyles.iconContainer, { backgroundColor: colors.fillTertiary }]}>
+        <Icon name={getCategoryIcon(poi.category)} size={20} color={colors.tint} />
+      </View>
+      <View style={placeCardStyles.content}>
+        <Text style={[Typography.subheadline, { fontWeight: '600', color: colors.textPrimary }]} numberOfLines={1}>{poi.name}</Text>
+        <Text style={[Typography.footnote, { color: colors.textSecondary, textTransform: 'capitalize', marginTop: 2 }]}>
           {poi.category.replace(/_/g, ' ')} · ⭐ {poi.rating.toFixed(1)}
         </Text>
       </View>
-      <View style={placeCard.action}>
-        <Text style={placeCard.actionText}>📄 View Text</Text>
+      <View style={[placeCardStyles.action, { backgroundColor: colors.buttonSecondary }]}>
+        <Text style={[Typography.caption2, { color: colors.buttonSecondaryText, fontWeight: '700' }]}>View Text</Text>
       </View>
     </TouchableOpacity>
   );
 }
 
-const placeCard = StyleSheet.create({
+const placeCardStyles = StyleSheet.create({
   card: {
-    backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 16,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: Spacing.base,
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: Spacing.sm + 2,
   },
-  icon: {
-    fontSize: 24,
-    marginRight: 14,
-    width: 32,
-    textAlign: 'center',
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.base,
   },
   content: {
     flex: 1,
-    marginRight: 12,
-  },
-  name: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: C.text,
-    marginBottom: 3,
-  },
-  details: {
-    fontSize: 12,
-    color: C.textSub,
-    textTransform: 'capitalize',
+    marginRight: Spacing.base,
   },
   action: {
-    backgroundColor: 'rgba(45, 212, 191, 0.1)',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(45, 212, 191, 0.2)',
-  },
-  actionText: {
-    fontSize: 11,
-    color: C.teal,
-    fontWeight: '700',
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.sm + 2,
+    paddingVertical: Spacing.xs + 2,
   },
 });
 
 // ─── Main screen ────────────────────────────────────────────────────────────────
 export default function TripsScreen() {
+  const router = useRouter();
+  const { colors, colorScheme } = useAppTheme();
+
   const [trips, setTrips] = useState<(Trip & { poi_count?: number })[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [activePreparations, setActivePreparations] = useState<Record<string, any>>({});
@@ -584,7 +582,7 @@ export default function TripsScreen() {
     setSelectedTrip(trip);
     setRenameText(trip.name);
     setActionModalVisible(true);
-  }, [activePreparations]);
+  }, [activePreparations, router]);
 
   const handleRename = useCallback(async () => {
     if (!selectedTrip || !renameText.trim()) return;
@@ -607,15 +605,25 @@ export default function TripsScreen() {
     if (!selectedPoi) return;
     try {
       if (isSpeaking) {
-        await Speech.stop();
+        await stopAudio();
         setIsSpeaking(false);
       } else {
         setIsSpeaking(true);
-        Speech.speak(selectedPoi.narration_text, {
-          onDone: () => setIsSpeaking(false),
-          onStopped: () => setIsSpeaking(false),
-          onError: () => setIsSpeaking(false),
-        });
+        await playTTSFallback(
+          selectedPoi.narration_text,
+          'en',
+          (status) => {
+            if (status === 'playing') {
+              setIsSpeaking(true);
+            } else if (
+              status === 'finished' ||
+              status === 'error' ||
+              status === 'paused'
+            ) {
+              setIsSpeaking(false);
+            }
+          }
+        );
       }
     } catch (err) {
       console.warn('Speech failed:', err);
@@ -626,7 +634,7 @@ export default function TripsScreen() {
   const handleClosePoiModal = useCallback(async () => {
     if (isSpeaking) {
       try {
-        await Speech.stop();
+        await stopAudio();
       } catch (e) {
         // ignore
       }
@@ -636,41 +644,29 @@ export default function TripsScreen() {
   }, [isSpeaking]);
 
   return (
-    <View style={s.container}>
-      <StatusBar barStyle="light-content" />
+    <View style={[s.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
-      <View style={s.header}>
+      <View style={[s.header, { backgroundColor: colors.background, borderBottomColor: colors.separator }]}>
         <View style={s.headerTop}>
-          <Text style={s.headerTitle}>{activeTab === 'trips' ? 'My Trips' : 'Researched Places'}</Text>
-          <Text style={s.headerSub}>
+          <Text style={[s.headerTitle, { color: colors.textPrimary }]}>
+            {activeTab === 'trips' ? 'My Trips' : 'Researched Places'}
+          </Text>
+          <Text style={[s.headerSub, { color: colors.textSecondary }]}>
             {activeTab === 'trips' 
               ? `${trips.length} trip${trips.length !== 1 ? 's' : ''}`
               : `${researchedPois.length} place${researchedPois.length !== 1 ? 's' : ''}`}
           </Text>
         </View>
 
-        {/* Tab Toggle Row */}
-        <View style={s.tabRow}>
-          <TouchableOpacity
-            style={[s.tabButton, activeTab === 'trips' && s.tabButtonActive]}
-            onPress={() => setActiveTab('trips')}
-            activeOpacity={0.8}
-          >
-            <Text style={[s.tabButtonText, activeTab === 'trips' && s.tabButtonTextActive]}>
-              🗺️ Trips
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.tabButton, activeTab === 'places' && s.tabButtonActive]}
-            onPress={() => setActiveTab('places')}
-            activeOpacity={0.8}
-          >
-            <Text style={[s.tabButtonText, activeTab === 'places' && s.tabButtonTextActive]}>
-              📚 Library
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Tab Toggle Row using SegmentedControl */}
+        <SegmentedControl
+          segments={['Trips', 'Library']}
+          selectedIndex={activeTab === 'trips' ? 0 : 1}
+          onSelect={(index) => setActiveTab(index === 0 ? 'trips' : 'places')}
+          style={{ marginTop: Spacing.sm }}
+        />
       </View>
 
       {activeTab === 'trips' ? (
@@ -695,8 +691,8 @@ export default function TripsScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={C.gold}
-              colors={[C.gold]}
+              tintColor={colors.tint}
+              colors={[colors.tint]}
             />
           }
           showsVerticalScrollIndicator={false}
@@ -714,7 +710,7 @@ export default function TripsScreen() {
               poi={item}
               onPress={async (poi) => {
                 if (isSpeaking) {
-                  try { await Speech.stop(); } catch (e) {}
+                  try { await stopAudio(); } catch (e) {}
                   setIsSpeaking(false);
                 }
                 setSelectedPoi(poi);
@@ -723,11 +719,13 @@ export default function TripsScreen() {
             />
           )}
           ListEmptyComponent={
-            <View style={empty.container}>
-              <Text style={empty.globe}>📚</Text>
-              <Text style={empty.title}>No Places Researched Yet</Text>
-              <Text style={empty.subtitle}>
-                Complete a trip research to populate your places library!
+            <View style={emptyStyles.container}>
+              <Icon name={Icons.docText} size={64} color={colors.textQuaternary} style={{ marginBottom: Spacing.base }} />
+              <Text style={[Typography.title2, { color: colors.textPrimary, marginBottom: Spacing.sm, textAlign: 'center' }]}>
+                No Places Researched
+              </Text>
+              <Text style={[Typography.body, { color: colors.textSecondary, textAlign: 'center' }]}>
+                Complete trip research to populate your library!
               </Text>
             </View>
           }
@@ -735,8 +733,8 @@ export default function TripsScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor={C.teal}
-              colors={[C.teal]}
+              tintColor={colors.tint}
+              colors={[colors.tint]}
             />
           }
           showsVerticalScrollIndicator={false}
@@ -756,100 +754,98 @@ export default function TripsScreen() {
             activeOpacity={1}
             onPress={() => setActionModalVisible(false)}
           >
-            <View style={s.modalSheet}>
+            <View style={[s.modalSheet, { backgroundColor: colors.backgroundGrouped, borderColor: colors.cardBorder }]}>
               {/* Handle bar */}
-              <View style={s.modalHandle} />
+              <View style={[s.modalHandle, { backgroundColor: colors.separator }]} />
               
-              <Text style={s.modalTitle} numberOfLines={1}>{selectedTrip.name}</Text>
-              <Text style={s.modalSubtitle}>📍 {selectedTrip.destination.name}</Text>
+              <Text style={[s.modalTitle, { color: colors.textPrimary }]} numberOfLines={1}>{selectedTrip.name}</Text>
+              <Text style={[s.modalSubtitle, { color: colors.textSecondary }]}>📍 {selectedTrip.destination.name}</Text>
 
-              <View style={s.modalDivider} />
+              <GroupedSection style={{ marginHorizontal: 0 }}>
+                {/* Status specific actions */}
+                {selectedTrip.status === 'preparing' && (
+                  <GroupedRow
+                    label="Resume Research"
+                    icon={Icons.arrowClockwise}
+                    iconColor={colors.tint}
+                    onPress={() => {
+                      setActionModalVisible(false);
+                      router.push(`/trip/prepare?tripId=${selectedTrip.id}`);
+                    }}
+                  />
+                )}
 
-              {/* Status specific actions */}
-              {selectedTrip.status === 'preparing' && (
-                <TouchableOpacity
-                  style={s.modalOptionBtn}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    router.push(`/trip/prepare?tripId=${selectedTrip.id}`);
-                  }}
-                >
-                  <Text style={[s.modalOptionText, { color: C.teal }]}>🔄 Resume Research</Text>
-                </TouchableOpacity>
-              )}
+                {selectedTrip.status === 'ready' && (
+                  <GroupedRow
+                    label="Start Trip"
+                    icon={Icons.trips}
+                    iconColor={colors.success}
+                    onPress={() => {
+                      setActionModalVisible(false);
+                      router.push(`/trip/active?tripId=${selectedTrip.id}`);
+                    }}
+                  />
+                )}
 
-              {selectedTrip.status === 'ready' && (
-                <TouchableOpacity
-                  style={s.modalOptionBtn}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    router.push(`/trip/active?tripId=${selectedTrip.id}`);
-                  }}
-                >
-                  <Text style={[s.modalOptionText, { color: C.green }]}>🗺️ Start Trip</Text>
-                </TouchableOpacity>
-              )}
+                {selectedTrip.status === 'active' && (
+                  <GroupedRow
+                    label="Resume Active Trip"
+                    icon={Icons.trips}
+                    iconColor={colors.success}
+                    onPress={() => {
+                      setActionModalVisible(false);
+                      router.push(`/trip/active?tripId=${selectedTrip.id}`);
+                    }}
+                  />
+                )}
 
-              {selectedTrip.status === 'active' && (
-                <TouchableOpacity
-                  style={s.modalOptionBtn}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    router.push(`/trip/active?tripId=${selectedTrip.id}`);
-                  }}
-                >
-                  <Text style={[s.modalOptionText, { color: C.green }]}>🗺️ Resume Active Trip</Text>
-                </TouchableOpacity>
-              )}
+                {selectedTrip.status === 'completed' && (
+                  <GroupedRow
+                    label="View Trip Summary"
+                    icon={Icons.trophy}
+                    iconColor={colors.warning}
+                    onPress={() => {
+                      setActionModalVisible(false);
+                      router.push(`/trip/review?tripId=${selectedTrip.id}`);
+                    }}
+                  />
+                )}
 
-              {selectedTrip.status === 'completed' && (
-                <TouchableOpacity
-                  style={s.modalOptionBtn}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    router.push(`/trip/review?tripId=${selectedTrip.id}`);
-                  }}
-                >
-                  <Text style={[s.modalOptionText, { color: C.blue }]}>🏆 View Trip Summary</Text>
-                </TouchableOpacity>
-              )}
+                {/* Preview Research Action */}
+                {(selectedTrip.status !== 'preparing' || selectedTrip.pois.length > 0) && (
+                  <GroupedRow
+                    label="Preview Research (Text & Audio)"
+                    icon={Icons.docText}
+                    onPress={() => {
+                      setActionModalVisible(false);
+                      router.push(`/trip/preview?tripId=${selectedTrip.id}`);
+                    }}
+                  />
+                )}
 
-              {/* Preview Research Action (for non-interrupted ready/active/completed trips, or preparing trips with POIs) */}
-              {(selectedTrip.status !== 'preparing' || selectedTrip.pois.length > 0) && (
-                <TouchableOpacity
-                  style={s.modalOptionBtn}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    router.push(`/trip/preview?tripId=${selectedTrip.id}`);
-                  }}
-                >
-                  <Text style={s.modalOptionText}>📚 Preview Research (Text & Audio)</Text>
-                </TouchableOpacity>
-              )}
+                {/* Rename Trip */}
+                <GroupedRow
+                  label="Rename Trip"
+                  icon={Icons.pencil}
+                  onPress={() => setRenameModalVisible(true)}
+                />
 
-              {/* Rename Trip */}
-              <TouchableOpacity
-                style={s.modalOptionBtn}
-                onPress={() => setRenameModalVisible(true)}
-              >
-                <Text style={s.modalOptionText}>✏️ Rename Trip</Text>
-              </TouchableOpacity>
-
-              {/* Delete Trip */}
-              <TouchableOpacity
-                style={[s.modalOptionBtn, { borderBottomWidth: 0 }]}
-                onPress={() => handleDelete(selectedTrip.id, selectedTrip.name)}
-              >
-                <Text style={[s.modalOptionText, { color: C.red }]}>🗑 Delete Trip</Text>
-              </TouchableOpacity>
+                {/* Delete Trip */}
+                <GroupedRow
+                  label="Delete Trip"
+                  icon={Icons.trash}
+                  destructive
+                  showSeparator={false}
+                  onPress={() => handleDelete(selectedTrip.id, selectedTrip.name)}
+                />
+              </GroupedSection>
 
               {/* Cancel */}
-              <TouchableOpacity
-                style={s.modalCancelBtn}
+              <SecondaryButton
+                title="Cancel"
                 onPress={() => setActionModalVisible(false)}
-              >
-                <Text style={s.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
+                style={{ marginTop: Spacing.sm }}
+              />
             </View>
           </TouchableOpacity>
         </Modal>
@@ -863,15 +859,22 @@ export default function TripsScreen() {
         onRequestClose={() => setRenameModalVisible(false)}
       >
         <View style={s.renameModalOverlay}>
-          <View style={s.renameModalContent}>
-            <Text style={s.renameModalTitle}>Rename Trip</Text>
+          <View style={[s.renameModalContent, { backgroundColor: colors.backgroundElevated, borderColor: colors.cardBorder }]}>
+            <Text style={[Typography.headline, { color: colors.textPrimary, marginBottom: Spacing.base }]}>Rename Trip</Text>
             <TextInput
-              style={s.renameInput}
+              style={[
+                s.renameInput,
+                {
+                  backgroundColor: colors.fillTertiary,
+                  borderColor: colors.cardBorder,
+                  color: colors.textPrimary,
+                },
+              ]}
               value={renameText}
               onChangeText={setRenameText}
               placeholder="Enter new trip name..."
-              placeholderTextColor={C.muted}
-              selectionColor={C.gold}
+              placeholderTextColor={colors.textSecondary}
+              selectionColor={colors.tint}
               autoFocus={true}
             />
             <View style={s.renameActions}>
@@ -879,13 +882,13 @@ export default function TripsScreen() {
                 style={s.renameCancelBtn}
                 onPress={() => setRenameModalVisible(false)}
               >
-                <Text style={s.renameCancelText}>Cancel</Text>
+                <Text style={[Typography.subheadline, { fontWeight: '600', color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={s.renameSaveBtn}
+                style={[s.renameSaveBtn, { backgroundColor: colors.buttonPrimary }]}
                 onPress={handleRename}
               >
-                <Text style={s.renameSaveText}>Save</Text>
+                <Text style={[Typography.subheadline, { fontWeight: '700', color: colors.buttonPrimaryText }]}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -901,28 +904,41 @@ export default function TripsScreen() {
           onRequestClose={handleClosePoiModal}
         >
           <View style={s.modalOverlay}>
-            <View style={[s.modalSheet, { maxHeight: '85%' }]}>
+            <View style={[s.modalSheet, { backgroundColor: colors.backgroundGrouped, borderColor: colors.cardBorder, maxHeight: '85%' }]}>
               {/* Handle bar */}
-              <View style={s.modalHandle} />
+              <View style={[s.modalHandle, { backgroundColor: colors.separator }]} />
               
               <ScrollView showsVerticalScrollIndicator={false} style={{ marginBottom: 16 }}>
                 {/* Header */}
                 <View style={s.poiDetailHeader}>
-                  <Text style={s.poiDetailEmoji}>{categoryIcon(selectedPoi.category)}</Text>
-                  <Text style={s.poiDetailTitle}>{selectedPoi.name}</Text>
-                  <Text style={s.poiDetailSubtitle}>
+                  <View style={[s.poiDetailIconContainer, { backgroundColor: colors.fillTertiary }]}>
+                    <Icon name={getCategoryIcon(selectedPoi.category)} size={32} color={colors.tint} />
+                  </View>
+                  <Text style={[Typography.title2, { color: colors.textPrimary, textAlign: 'center', marginBottom: 4 }]}>
+                    {selectedPoi.name}
+                  </Text>
+                  <Text style={[Typography.footnote, { color: colors.textSecondary, textAlign: 'center', textTransform: 'capitalize' }]}>
                     {selectedPoi.category.replace(/_/g, ' ')} · ⭐ {selectedPoi.rating.toFixed(1)}
                   </Text>
 
                   {/* Read Aloud Toggle */}
                   <TouchableOpacity
-                    style={[s.readAloudBtn, isSpeaking && s.readAloudBtnActive]}
+                    style={[
+                      s.readAloudBtn,
+                      {
+                        backgroundColor: isSpeaking ? colors.destructive + '15' : colors.tint + '15',
+                        borderColor: isSpeaking ? colors.destructive : colors.tint,
+                      }
+                    ]}
                     onPress={handleReadAloud}
                     activeOpacity={0.7}
                   >
-                    <Text style={s.readAloudText}>
-                      {isSpeaking ? '🛑 Stop Reading' : '🔊 Read Aloud (Device TTS)'}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <SymbolView name={isSpeaking ? Icons.stop : Icons.speaker} tintColor={isSpeaking ? colors.destructive : colors.tint} size={16} />
+                      <Text style={[Typography.subheadline, { fontWeight: '600', color: isSpeaking ? colors.destructive : colors.tint }]}>
+                        {isSpeaking ? 'Stop Reading' : 'Read Aloud (Device TTS)'}
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                 </View>
 
@@ -935,30 +951,32 @@ export default function TripsScreen() {
                   />
                 ) : null}
 
-                <View style={s.modalDivider} />
+                <View style={[s.modalDivider, { backgroundColor: colors.separator }]} />
 
                 {/* Research Text Label */}
-                <Text style={s.poiDetailLabel}>RESEARCH DOCUMENT</Text>
+                <Text style={[Typography.caption2, { color: colors.tint, fontWeight: '700', letterSpacing: 1.0, marginBottom: 10 }]}>
+                  RESEARCH DOCUMENT
+                </Text>
 
                 {/* Content body */}
-                <Text style={s.poiDetailText}>{selectedPoi.narration_text}</Text>
+                <Text style={[Typography.body, { color: colors.textPrimary, lineHeight: 22, marginBottom: 16 }]}>
+                  {selectedPoi.narration_text}
+                </Text>
 
-                <View style={s.modalDivider} />
+                <View style={[s.modalDivider, { backgroundColor: colors.separator }]} />
 
                 {/* Meta details footer */}
                 <View style={s.poiDetailMetaRow}>
-                  <Text style={s.poiDetailMetaText}>📝 Word Count: {selectedPoi.narration_word_count}</Text>
-                  <Text style={s.poiDetailMetaText}>⏱ Reading Time: ~{Math.max(1, Math.round(selectedPoi.narration_word_count / 200))} min</Text>
+                  <Text style={[Typography.caption1, { color: colors.textSecondary }]}>📝 Word Count: {selectedPoi.narration_word_count}</Text>
+                  <Text style={[Typography.caption1, { color: colors.textSecondary }]}>⏱ Reading Time: ~{Math.max(1, Math.round(selectedPoi.narration_word_count / 200))} min</Text>
                 </View>
               </ScrollView>
 
               {/* Close Button */}
-              <TouchableOpacity
-                style={s.modalCancelBtn}
+              <SecondaryButton
+                title="Close Document"
                 onPress={handleClosePoiModal}
-              >
-                <Text style={s.modalCancelText}>Close Document</Text>
-              </TouchableOpacity>
+              />
             </View>
           </View>
         </Modal>
@@ -969,28 +987,30 @@ export default function TripsScreen() {
 
 // ─── Styles ─────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg },
+  container: {
+    flex: 1,
+  },
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-    backgroundColor: C.surface,
+    paddingHorizontal: Spacing.base,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
   },
   headerTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: C.text,
+    ...Typography.title1,
   },
   headerSub: {
-    fontSize: 13,
-    color: C.textSub,
-    marginTop: 2,
+    ...Typography.footnote,
   },
   listContent: {
-    padding: 16,
-    paddingBottom: 32,
+    padding: Spacing.base,
+    paddingBottom: Spacing['3xl'],
   },
   listContentEmpty: {
     flex: 1,
@@ -1001,221 +1021,97 @@ const s = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalSheet: {
-    backgroundColor: C.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: C.border,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
+    padding: Spacing.xl,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   modalHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: C.border,
-    borderRadius: 2,
+    width: 36,
+    height: 5,
+    borderRadius: Radius.full,
     alignSelf: 'center',
-    marginBottom: 16,
+    marginBottom: Spacing.base,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: C.text,
+    ...Typography.title3,
     textAlign: 'center',
-    marginBottom: 4,
+    marginBottom: Spacing.xs,
   },
   modalSubtitle: {
-    fontSize: 14,
-    color: C.textSub,
+    ...Typography.footnote,
     textAlign: 'center',
-    marginBottom: 16,
+    marginBottom: Spacing.base,
   },
   modalDivider: {
-    height: 1,
-    backgroundColor: C.border,
-    marginBottom: 12,
-  },
-  modalOptionBtn: {
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  modalOptionText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: C.text,
-    textAlign: 'center',
-  },
-  modalCancelBtn: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 12,
-    paddingVertical: 14,
-    marginTop: 16,
-  },
-  modalCancelText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: C.textSub,
-    textAlign: 'center',
+    height: StyleSheet.hairlineWidth,
+    marginVertical: Spacing.md,
   },
   // Rename Modal
   renameModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: Spacing.xl,
   },
   renameModalContent: {
     width: '100%',
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  renameModalTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: C.text,
-    marginBottom: 16,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   renameInput: {
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderWidth: 1,
-    borderColor: C.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
     height: 48,
-    color: C.text,
-    fontSize: 15,
-    marginBottom: 20,
+    ...Typography.body,
+    marginBottom: Spacing.xl,
   },
   renameActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: 12,
+    gap: Spacing.base,
   },
   renameCancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  renameCancelText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: C.textSub,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.base,
   },
   renameSaveBtn: {
-    backgroundColor: C.gold,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-  },
-  renameSaveText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#000',
-  },
-  headerTop: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 10,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabButtonActive: {
-    backgroundColor: '#1a2236',
-    borderWidth: 1,
-    borderColor: '#252f47',
-  },
-  tabButtonText: {
-    fontSize: 14,
-    color: '#94a3b8',
-    fontWeight: '600',
-  },
-  tabButtonTextActive: {
-    color: '#f1f5f9',
-    fontWeight: '700',
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
   },
   poiDetailHeader: {
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: Spacing.base,
   },
-  poiDetailEmoji: {
-    fontSize: 40,
-    marginBottom: 8,
-  },
-  poiDetailTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: C.text,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  poiDetailSubtitle: {
-    fontSize: 14,
-    color: C.textSub,
-    textAlign: 'center',
-    textTransform: 'capitalize',
+  poiDetailIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: Radius.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.sm,
   },
   poiDetailImage: {
     width: '100%',
-    height: 180,
-    borderRadius: 12,
-    marginVertical: 16,
-  },
-  poiDetailLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: C.teal,
-    letterSpacing: 1.0,
-    marginBottom: 10,
-  },
-  poiDetailText: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.85)',
-    lineHeight: 22,
-    marginBottom: 16,
+    height: 200,
+    borderRadius: Radius.lg,
+    marginVertical: Spacing.base,
   },
   poiDetailMetaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingTop: 8,
-  },
-  poiDetailMetaText: {
-    fontSize: 12,
-    color: C.textSub,
+    paddingTop: Spacing.sm,
   },
   readAloudBtn: {
-    marginTop: 12,
-    backgroundColor: 'rgba(245, 200, 66, 0.1)',
-    borderWidth: 1,
-    borderColor: C.gold,
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    marginTop: Spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.base,
     alignSelf: 'center',
-  },
-  readAloudBtnActive: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderColor: C.red,
-  },
-  readAloudText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: C.text,
   },
 });

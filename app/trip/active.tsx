@@ -17,6 +17,8 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useProximityTrigger } from '@/src/hooks/useProximityTrigger';
@@ -32,37 +34,18 @@ import {
 import { updatePOI } from '@/src/services/storage/tripStorage';
 import type { Trip } from '@/src/types/trip';
 import type { POI } from '@/src/types/poi';
+import { SymbolView } from 'expo-symbols';
 
-// ─── Color palette ────────────────────────────────────────────────────────────
-const COLORS = {
-  bg: '#0a0e1a',
-  surface: '#131929',
-  card: '#1a2236',
-  border: '#252f47',
-  gold: '#f5c842',
-  teal: '#2dd4bf',
-  green: '#22c55e',
-  red: '#ef4444',
-  muted: '#6b7280',
-  text: '#f1f5f9',
-  textSub: '#94a3b8',
-};
-
-// ─── Category icons ────────────────────────────────────────────────────────────
-function categoryIcon(cat: POI['category']): string {
-  const map: Record<POI['category'], string> = {
-    historical_landmark: '🏛️',
-    museum: '🏛️',
-    church: '⛪',
-    park: '🌿',
-    natural_landmark: '🏔️',
-    monument: '🗿',
-    cultural_site: '🎭',
-    quirky: '🎪',
-    other: '📍',
-  };
-  return map[cat] ?? '📍';
-}
+import { useAppTheme } from '@/src/theme/ThemeContext';
+import {
+  PrimaryButton,
+  SecondaryButton,
+  DestructiveButton,
+  Badge,
+  Icon,
+} from '@/src/theme/UIComponents';
+import { Icons, getCategoryIcon } from '@/src/theme/icons';
+import { Typography, Spacing, Radius } from '@/src/theme/theme';
 
 function formatMinutes(mins: number): string {
   if (mins < 1) return '< 1 min';
@@ -99,13 +82,14 @@ function POICard({
   onBookmark,
   slideAnim,
 }: POICardProps) {
+  const { colors } = useAppTheme();
   const translateY = slideAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [320, 0],
   });
 
   return (
-    <Animated.View style={[styles.poiCard, { transform: [{ translateY }] }]}>
+    <Animated.View style={[styles.poiCard, { transform: [{ translateY }], backgroundColor: colors.backgroundElevated, borderColor: colors.cardBorder }]}>
       {/* Image */}
       {poi.image_url ? (
         <Image
@@ -114,19 +98,21 @@ function POICard({
           resizeMode="cover"
         />
       ) : (
-        <View style={styles.poiImagePlaceholder}>
-          <Text style={styles.poiImageIcon}>{categoryIcon(poi.category)}</Text>
+        <View style={[styles.poiImagePlaceholder, { backgroundColor: colors.fillTertiary }]}>
+          <Icon name={getCategoryIcon(poi.category)} size={48} color={colors.textQuaternary} />
         </View>
       )}
 
       {/* Info row */}
       <View style={styles.poiInfo}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.poiName} numberOfLines={2}>{poi.name}</Text>
-          <Text style={styles.poiMeta}>
-            {categoryIcon(poi.category)} {poi.category.replace(/_/g, ' ')} ·{' '}
-            {formatMinutes(poi.estimated_listen_minutes)}
-          </Text>
+          <Text style={[Typography.title3, { color: colors.textPrimary }]} numberOfLines={1}>{poi.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+            <SymbolView name={getCategoryIcon(poi.category)} tintColor={colors.textSecondary} size={12} style={{ marginRight: 4 }} />
+            <Text style={[Typography.footnote, { color: colors.textSecondary, textTransform: 'capitalize' }]}>
+              {poi.category.replace(/_/g, ' ')} · Estimated: {formatMinutes(poi.estimated_listen_minutes)}
+            </Text>
+          </View>
         </View>
         {/* Bookmark */}
         <TouchableOpacity
@@ -134,33 +120,40 @@ function POICard({
           style={styles.bookmarkBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={[styles.bookmarkIcon, poi.bookmarked && styles.bookmarkActive]}>
-            {poi.bookmarked ? '★' : '☆'}
-          </Text>
+          <SymbolView
+            name={poi.bookmarked ? Icons.bookmarkFilled : Icons.bookmark}
+            tintColor={poi.bookmarked ? colors.warning : colors.textSecondary}
+            size={22}
+          />
         </TouchableOpacity>
       </View>
 
       {/* Controls */}
       <View style={styles.controlRow}>
-        <TouchableOpacity style={styles.skipBtn} onPress={onSkip}>
-          <Text style={styles.skipBtnText}>⏭ Skip</Text>
+        <TouchableOpacity style={[styles.skipBtn, { backgroundColor: colors.fillSecondary }]} onPress={onSkip}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+            <SymbolView name={Icons.skipForward} tintColor={colors.textPrimary} size={16} style={{ marginRight: 6 }} />
+            <Text style={[Typography.headline, { color: colors.textPrimary }]}>Skip</Text>
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.playPauseBtn}
+          style={[styles.playPauseBtn, { backgroundColor: colors.tint }]}
           onPress={isPaused ? onResume : onPause}
         >
-          <Text style={styles.playPauseBtnText}>
-            {playbackStatus === 'loading' ? '⏳' : isPaused ? '▶' : '⏸'}
-          </Text>
+          {playbackStatus === 'loading' ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <SymbolView name={isPaused ? Icons.play : Icons.pause} tintColor="#FFFFFF" size={20} />
+          )}
         </TouchableOpacity>
       </View>
 
       {/* Queue indicator */}
       {queueLength > 0 && (
-        <View style={styles.queueRow}>
-          <Text style={styles.queueText}>
-            🎵 {queueLength} more POI{queueLength !== 1 ? 's' : ''} coming up
+        <View style={[styles.queueRow, { backgroundColor: colors.fillTertiary }]}>
+          <Text style={[Typography.caption2, { color: colors.tint, textAlign: 'center' }]}>
+            {queueLength} more POI{queueLength !== 1 ? 's' : ''} coming up
           </Text>
         </View>
       )}
@@ -168,28 +161,11 @@ function POICard({
   );
 }
 
-// ─── Direction helper ─────────────────────────────────────────────────────────
-function bearing(
-  fromLat: number,
-  fromLng: number,
-  toLat: number,
-  toLng: number
-): string {
-  const dLng = toLng - fromLng;
-  const y = Math.sin(dLng) * Math.cos(toLat);
-  const x =
-    Math.cos(fromLat) * Math.sin(toLat) -
-    Math.sin(fromLat) * Math.cos(toLat) * Math.cos(dLng);
-  const brng = (Math.atan2(y, x) * 180) / Math.PI;
-  const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
-  const idx = Math.round(((brng + 360) % 360) / 45) % 8;
-  return arrows[idx];
-}
-
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function TripActiveScreen() {
   const params = useLocalSearchParams<{ tripId?: string }>();
   const tripId = params.tripId ?? '';
+  const { colors, colorScheme } = useAppTheme();
 
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
@@ -241,9 +217,6 @@ export default function TripActiveScreen() {
   const tripMode = trip?.mode ?? 'city';
 
   const proximity = useProximityTrigger(pois, tripMode, tripId || undefined);
-  // useNarrationPlayer is already used inside useProximityTrigger; expose via
-  // the narration state it returns through the proximity hook's narration state.
-  // We need our own narration hook for UI controls:
   const narration = useNarrationPlayer();
 
   // Start proximity engine when trip is loaded
@@ -392,21 +365,20 @@ export default function TripActiveScreen() {
   // ── Loading ───────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <View style={[styles.container, styles.center]}>
+      <View style={[styles.container, styles.center, { backgroundColor: colors.background }]}>
         <Stack.Screen options={{ title: 'Active Trip', headerBackVisible: false }} />
-        <Text style={styles.loadingText}>Loading trip…</Text>
+        <ActivityIndicator size="large" color={colors.tint} />
+        <Text style={[Typography.body, { color: colors.textSecondary, marginTop: Spacing.base }]}>Loading trip…</Text>
       </View>
     );
   }
 
   if (!trip) {
     return (
-      <View style={[styles.container, styles.center]}>
+      <View style={[styles.container, styles.center, { backgroundColor: colors.background }]}>
         <Stack.Screen options={{ title: 'Active Trip', headerBackVisible: false }} />
-        <Text style={styles.errorText}>Trip not found.</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.btn}>
-          <Text style={styles.btnText}>Go Back</Text>
-        </TouchableOpacity>
+        <Text style={[Typography.body, { color: colors.destructive, marginBottom: Spacing.xl }]}>Trip not found.</Text>
+        <SecondaryButton title="Go Back" onPress={() => router.back()} />
       </View>
     );
   }
@@ -417,28 +389,28 @@ export default function TripActiveScreen() {
     : null;
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} />
       <Stack.Screen options={{ title: 'Active Trip', headerBackVisible: false }} />
 
       {/* ── Header bar ─────────────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle} numberOfLines={1}>{trip.name}</Text>
-          <Text style={styles.headerSub}>{trip.destination.name}</Text>
+      <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.separator }]}>
+        <View style={{ flex: 1, marginRight: Spacing.md }}>
+          <Text style={[Typography.headline, { color: colors.textPrimary }]} numberOfLines={1}>{trip.name}</Text>
+          <Text style={[Typography.footnote, { color: colors.textSecondary, marginTop: 2 }]} numberOfLines={1}>{trip.destination.name}</Text>
         </View>
-        <TouchableOpacity style={styles.endBtn} onPress={handleEndTrip}>
-          <Text style={styles.endBtnText}>End Trip</Text>
+        <TouchableOpacity style={[styles.endBtn, { backgroundColor: colors.destructive + '15' }]} onPress={handleEndTrip}>
+          <Text style={[Typography.subheadline, { color: colors.destructive, fontWeight: '600' }]}>End Trip</Text>
         </TouchableOpacity>
       </View>
 
       {/* ── Location display ───────────────────────────────────────────── */}
-      <View style={styles.locationPanel}>
-        <View style={styles.locationDot} />
-        <Text style={styles.locationText}>
-          {proximity.isActive ? 'GPS Active' : 'Starting GPS…'}
+      <View style={[styles.locationPanel, { backgroundColor: colors.fillTertiary, borderBottomColor: colors.separator }]}>
+        <View style={[styles.locationDot, { backgroundColor: proximity.isActive ? colors.success : colors.warning }]} />
+        <Text style={[Typography.subheadline, { color: colors.textPrimary, fontWeight: '600', flex: 1 }]}>
+          {proximity.isActive ? 'GPS Tracking Active' : 'Starting GPS…'}
           {proximity.isActive && !!proximity.nextPOI && (
-            <Text style={styles.locationSub}>
+            <Text style={{ fontWeight: '400', color: colors.textSecondary }}>
               {' '}— next POI in {formatDistance(proximity.distanceToNextPOI)}
             </Text>
           )}
@@ -447,7 +419,7 @@ export default function TripActiveScreen() {
 
       {/* ── POI list (fallback / overview) ────────────────────────────── */}
       <View style={styles.poiListWrapper}>
-        <Text style={styles.sectionTitle}>
+        <Text style={[Typography.caption2, { color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: Spacing.sm }]}>
           Points of Interest · {proximity.remainingPOICount} remaining
         </Text>
         <ScrollView
@@ -456,7 +428,6 @@ export default function TripActiveScreen() {
         >
           {pois.map((poi) => {
             const isPlayed = proximity.playedCount > 0 && poi.played_at != null;
-            const isSkipped = proximity.skippedCount > 0;
             const isCurrent = currentPOI?.id === poi.id;
             const distanceArrow =
               proximity.nextPOI?.id === poi.id &&
@@ -470,62 +441,67 @@ export default function TripActiveScreen() {
                 key={poi.id}
                 style={[
                   styles.poiListItem,
-                  isCurrent && styles.poiListItemActive,
+                  {
+                    backgroundColor: colors.cardBackground,
+                    borderColor: isCurrent ? colors.tint : colors.cardBorder,
+                  },
+                  isCurrent && { borderWidth: 1.5 },
                 ]}
               >
-                <Text style={styles.poiListIcon}>{categoryIcon(poi.category)}</Text>
-                <View style={{ flex: 1 }}>
+                <View style={[styles.poiIconContainer, { backgroundColor: colors.fillTertiary }]}>
+                  <Icon name={getCategoryIcon(poi.category)} size={18} color={isCurrent ? colors.tint : colors.textSecondary} />
+                </View>
+                <View style={{ flex: 1, marginRight: Spacing.sm }}>
                   <Text
                     style={[
-                      styles.poiListName,
-                      isPlayed && styles.poiListNamePlayed,
+                      Typography.subheadline,
+                      { fontWeight: '600', color: isCurrent ? colors.tint : colors.textPrimary },
+                      isPlayed && { color: colors.textTertiary, textDecorationLine: 'line-through' },
                     ]}
                     numberOfLines={1}
                   >
                     {poi.name}
                     {distanceArrow ? (
-                      <Text style={styles.poiListDistance}>{distanceArrow}</Text>
+                      <Text style={{ color: colors.tint, fontWeight: '500' }}>{distanceArrow}</Text>
                     ) : null}
                   </Text>
-                  <Text style={styles.poiListMeta}>
+                  <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2 }]}>
                     {formatMinutes(poi.estimated_listen_minutes)}
-                    {bookmarkedIds.has(poi.id) ? ' · ★' : ''}
+                    {bookmarkedIds.has(poi.id) ? ' · ★ bookmarked' : ''}
                   </Text>
                 </View>
-                <Text style={styles.poiListStatus}>
-                  {isCurrent
-                    ? '▶'
-                    : isPlayed
-                    ? '✓'
-                    : '○'}
-                </Text>
+                <SymbolView
+                  name={isCurrent ? Icons.play : isPlayed ? Icons.checkmarkCircle : Icons.circle}
+                  tintColor={isCurrent ? colors.tint : isPlayed ? colors.success : colors.textQuaternary}
+                  size={18}
+                />
               </View>
             );
           })}
 
           {pois.length === 0 && (
             <View style={styles.noPoisBox}>
-              <Text style={styles.noPoisText}>No POIs found for this trip.</Text>
+              <Text style={[Typography.body, { color: colors.textSecondary }]}>No POIs found for this trip.</Text>
             </View>
           )}
         </ScrollView>
       </View>
 
       {/* ── Stats bar ─────────────────────────────────────────────────── */}
-      <View style={styles.statsBar}>
+      <View style={[styles.statsBar, { backgroundColor: colors.backgroundElevated, borderTopColor: colors.separator }]}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{playedCount}/{totalPOIs}</Text>
-          <Text style={styles.statLabel}>POIs</Text>
+          <Text style={[Typography.headline, { color: colors.tint, fontWeight: '700' }]}>{playedCount}/{totalPOIs}</Text>
+          <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2, textTransform: 'uppercase' }]}>POIs</Text>
         </View>
-        <View style={styles.statDivider} />
+        <View style={[styles.statDivider, { backgroundColor: colors.separator }]} />
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{elapsed}</Text>
-          <Text style={styles.statLabel}>Elapsed</Text>
+          <Text style={[Typography.headline, { color: colors.textPrimary, fontWeight: '700' }]}>{elapsed}</Text>
+          <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2, textTransform: 'uppercase' }]}>Elapsed</Text>
         </View>
-        <View style={styles.statDivider} />
+        <View style={[styles.statDivider, { backgroundColor: colors.separator }]} />
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{proximity.remainingPOICount}</Text>
-          <Text style={styles.statLabel}>Remaining</Text>
+          <Text style={[Typography.headline, { color: colors.textPrimary, fontWeight: '700' }]}>{proximity.remainingPOICount}</Text>
+          <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2, textTransform: 'uppercase' }]}>Remaining</Text>
         </View>
       </View>
 
@@ -551,84 +527,46 @@ export default function TripActiveScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.bg,
   },
   center: {
     alignItems: 'center',
     justifyContent: 'center',
+    padding: Spacing.xl,
   },
   // ── Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 56,
-    paddingBottom: 12,
-    backgroundColor: COLORS.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.text,
-    maxWidth: 220,
-  },
-  headerSub: {
-    fontSize: 13,
-    color: COLORS.textSub,
-    marginTop: 2,
+    paddingHorizontal: Spacing.base,
+    paddingTop: Platform.OS === 'ios' ? 56 : 40,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   endBtn: {
-    backgroundColor: COLORS.red,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  endBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
   },
   // ── Location panel
   locationPanel: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: COLORS.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   locationDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: COLORS.green,
-    marginRight: 8,
-  },
-  locationText: {
-    fontSize: 14,
-    color: COLORS.text,
-    fontWeight: '500',
-  },
-  locationSub: {
-    color: COLORS.teal,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: Spacing.sm,
   },
   // ── POI list
   poiListWrapper: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.textSub,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 10,
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.base,
   },
   poiScroll: {
     flex: 1,
@@ -636,81 +574,36 @@ const styles = StyleSheet.create({
   poiListItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  poiListItemActive: {
-    borderColor: COLORS.gold,
-    backgroundColor: '#1e2840',
-  },
-  poiListIcon: {
-    fontSize: 22,
-    marginRight: 12,
-    width: 28,
-    textAlign: 'center',
-  },
-  poiListName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.text,
-  },
-  poiListNamePlayed: {
-    color: COLORS.muted,
-    textDecorationLine: 'line-through',
-  },
-  poiListDistance: {
-    color: COLORS.teal,
-    fontWeight: '400',
-  },
-  poiListMeta: {
-    fontSize: 12,
-    color: COLORS.textSub,
-    marginTop: 2,
-  },
-  poiListStatus: {
-    fontSize: 18,
-    color: COLORS.textSub,
-    marginLeft: 8,
+  poiIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.base,
   },
   noPoisBox: {
     alignItems: 'center',
-    padding: 40,
-  },
-  noPoisText: {
-    color: COLORS.muted,
-    fontSize: 15,
+    padding: Spacing.xl * 2,
   },
   // ── Stats bar
   statsBar: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surface,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
   },
   statItem: {
     flex: 1,
     alignItems: 'center',
   },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.gold,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: COLORS.textSub,
-    marginTop: 2,
-    textTransform: 'uppercase',
-  },
   statDivider: {
-    width: 1,
-    backgroundColor: COLORS.border,
+    width: StyleSheet.hairlineWidth,
     marginVertical: 4,
   },
   // ── POI card (slide-up)
@@ -719,118 +612,56 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: COLORS.card,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.gold,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
+    borderTopWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: -4 },
     shadowRadius: 12,
     elevation: 16,
   },
   poiImage: {
     width: '100%',
-    height: 160,
+    height: 150,
   },
   poiImagePlaceholder: {
     width: '100%',
     height: 120,
-    backgroundColor: COLORS.surface,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  poiImageIcon: {
-    fontSize: 48,
   },
   poiInfo: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    padding: 16,
-  },
-  poiName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.text,
-    marginBottom: 4,
-  },
-  poiMeta: {
-    fontSize: 13,
-    color: COLORS.textSub,
+    padding: Spacing.base,
   },
   bookmarkBtn: {
-    paddingLeft: 12,
+    paddingLeft: Spacing.md,
     paddingTop: 2,
-  },
-  bookmarkIcon: {
-    fontSize: 26,
-    color: COLORS.muted,
-  },
-  bookmarkActive: {
-    color: COLORS.gold,
   },
   controlRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    gap: 12,
+    paddingHorizontal: Spacing.base,
+    paddingBottom: Spacing.base + Spacing.sm,
+    gap: Spacing.base,
   },
   skipBtn: {
     flex: 1,
-    backgroundColor: COLORS.border,
-    borderRadius: 10,
-    paddingVertical: 12,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
     alignItems: 'center',
-  },
-  skipBtnText: {
-    color: COLORS.text,
-    fontSize: 15,
-    fontWeight: '600',
   },
   playPauseBtn: {
     flex: 1,
-    backgroundColor: COLORS.gold,
-    borderRadius: 10,
-    paddingVertical: 12,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
     alignItems: 'center',
   },
-  playPauseBtnText: {
-    color: '#000',
-    fontSize: 20,
-    fontWeight: '700',
-  },
   queueRow: {
-    backgroundColor: COLORS.surface,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  queueText: {
-    color: COLORS.teal,
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  // ── Misc
-  loadingText: {
-    color: COLORS.textSub,
-    fontSize: 16,
-  },
-  errorText: {
-    color: COLORS.red,
-    fontSize: 16,
-    marginBottom: 20,
-  },
-  btn: {
-    backgroundColor: COLORS.teal,
-    borderRadius: 10,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-  },
-  btnText: {
-    color: '#000',
-    fontWeight: '700',
-    fontSize: 15,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.base,
   },
 });

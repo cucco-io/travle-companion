@@ -24,7 +24,6 @@ import {
   StyleSheet,
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   ScrollView,
   Switch,
@@ -39,35 +38,27 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTripPreparation, PreparationStage } from '@/src/hooks/useTripPreparation';
 import { TripPreferences, TripMode, InterestCategory, NarrationDepth } from '@/src/types/trip';
 import { deleteTrip } from '@/src/services/storage/tripStorage';
+import { loadSettings } from '@/src/services/storage/settingsStorage';
+import { SymbolView } from 'expo-symbols';
 
-// ─── Design tokens ──────────────────────────────────────────────────────────
-const COLORS = {
-  navy: '#0A1628',
-  navyLight: '#122040',
-  navyMid: '#1A2E4A',
-  gold: '#F5A623',
-  goldLight: '#FFD166',
-  teal: '#06B6D4',
-  tealDark: '#0891B2',
-  white: '#FFFFFF',
-  whiteAlpha80: 'rgba(255,255,255,0.8)',
-  whiteAlpha50: 'rgba(255,255,255,0.5)',
-  whiteAlpha20: 'rgba(255,255,255,0.2)',
-  whiteAlpha10: 'rgba(255,255,255,0.1)',
-  whiteAlpha05: 'rgba(255,255,255,0.05)',
-  error: '#FF6B6B',
-  success: '#10B981',
-  green: '#34D399',
-  purple: '#A78BFA',
-} as const;
+import { useAppTheme } from '@/src/theme/ThemeContext';
+import {
+  PrimaryButton,
+  SecondaryButton,
+  DestructiveButton,
+  Badge,
+  Icon,
+} from '@/src/theme/UIComponents';
+import { Icons, SymbolName, getCategoryIcon } from '@/src/theme/icons';
+import { Typography, Spacing, Radius } from '@/src/theme/theme';
 
 // ─── Interest categories config ───────────────────────────────────────────────
-const INTEREST_OPTIONS: { id: InterestCategory; label: string; emoji: string }[] = [
-  { id: 'history', label: 'History', emoji: '🏛️' },
-  { id: 'nature', label: 'Nature', emoji: '🌿' },
-  { id: 'architecture', label: 'Architecture', emoji: '🏗️' },
-  { id: 'food_culture', label: 'Food & Culture', emoji: '🍽️' },
-  { id: 'quirky', label: 'Quirky', emoji: '🎭' },
+const INTEREST_OPTIONS: { id: InterestCategory; label: string; icon: SymbolName }[] = [
+  { id: 'history', label: 'History', icon: Icons.interestHistory },
+  { id: 'nature', label: 'Nature', icon: Icons.interestNature },
+  { id: 'architecture', label: 'Architecture', icon: Icons.interestArchitecture },
+  { id: 'food_culture', label: 'Food & Culture', icon: Icons.interestFoodCulture },
+  { id: 'quirky', label: 'Quirky', icon: Icons.interestQuirky },
 ];
 
 // ─── Narration depth options ──────────────────────────────────────────────────
@@ -90,17 +81,17 @@ const LANGUAGE_OPTIONS: { code: string; label: string; flag: string }[] = [
 type PipelineStep = {
   stage: PreparationStage;
   label: string;
-  icon: string;
+  icon: SymbolName;
 };
 
 const PIPELINE_STEPS: PipelineStep[] = [
-  { stage: 'fetching_route', label: 'Plotting route...', icon: '🗺️' },
-  { stage: 'fetching_pois', label: 'Finding points of interest...', icon: '📍' },
-  { stage: 'curating', label: 'Curating best POIs...', icon: '✨' },
-  { stage: 'generating_narrations', label: 'Generating narrations...', icon: '🎙️' },
-  { stage: 'synthesizing_audio', label: 'Creating audio...', icon: '🔊' },
-  { stage: 'caching', label: 'Downloading images...', icon: '📸' },
-  { stage: 'ready', label: 'Trip ready!', icon: '🎉' },
+  { stage: 'fetching_route', label: 'Plotting route...', icon: Icons.route },
+  { stage: 'fetching_pois', label: 'Finding points of interest...', icon: Icons.mappinCircle },
+  { stage: 'curating', label: 'Curating best POIs...', icon: Icons.wand },
+  { stage: 'generating_narrations', label: 'Generating narrations...', icon: Icons.docText },
+  { stage: 'synthesizing_audio', label: 'Creating audio...', icon: Icons.speaker },
+  { stage: 'caching', label: 'Downloading images...', icon: Icons.storage },
+  { stage: 'ready', label: 'Trip ready!', icon: Icons.checkmarkCircle },
 ];
 
 // ─── Stage ordering ────────────────────────────────────────────────────────────
@@ -130,6 +121,7 @@ function PipelineStepItem({
   statusMessage: string;
   isRouteMode: boolean;
 }) {
+  const { colors } = useAppTheme();
   const currentIndex = getStageIndex(currentStage);
   const stepIndex = getStageIndex(step.stage);
 
@@ -140,24 +132,7 @@ function PipelineStepItem({
   const isActive = step.stage === currentStage;
   const isPending = stepIndex > currentIndex && currentStage !== 'ready';
 
-  const spinAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(isPending ? 0.4 : 1)).current;
-
-  useEffect(() => {
-    if (isActive) {
-      Animated.loop(
-        Animated.timing(spinAnim, {
-          toValue: 1,
-          duration: 1200,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        })
-      ).start();
-    } else {
-      spinAnim.stopAnimation();
-      spinAnim.setValue(0);
-    }
-  }, [isActive]);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -167,49 +142,44 @@ function PipelineStepItem({
     }).start();
   }, [isPending]);
 
-  const spin = spinAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
-
   const label = isActive ? statusMessage || step.label : step.label;
 
   return (
     <Animated.View style={[styles.stepItem, { opacity: fadeAnim }]}>
       <View style={[
         styles.stepIconContainer,
-        isCompleted && styles.stepIconCompleted,
-        isActive && styles.stepIconActive,
+        {
+          backgroundColor: isCompleted
+            ? colors.success + '15'
+            : isActive
+            ? colors.tint + '15'
+            : colors.fillTertiary,
+          borderColor: isActive ? colors.tint : 'transparent',
+          borderWidth: isActive ? 1 : 0,
+        }
       ]}>
         {isActive ? (
-          <Animated.Text style={[styles.stepEmoji, { transform: [{ rotate: spin }] }]}>
-            ⚙️
-          </Animated.Text>
+          <ActivityIndicator size="small" color={colors.tint} />
         ) : isCompleted ? (
-          <Text style={styles.stepEmoji}>✅</Text>
+          <SymbolView name={Icons.checkmarkCircle} tintColor={colors.success} size={20} />
         ) : (
-          <Text style={[styles.stepEmoji, { opacity: 0.4 }]}>{step.icon}</Text>
+          <SymbolView name={step.icon} tintColor={colors.textQuaternary} size={20} />
         )}
       </View>
       <View style={styles.stepContent}>
         <Text style={[
-          styles.stepLabel,
-          isCompleted && styles.stepLabelCompleted,
-          isActive && styles.stepLabelActive,
-          isPending && styles.stepLabelPending,
+          Typography.subheadline,
+          {
+            fontWeight: '600',
+            color: isCompleted
+              ? colors.success
+              : isActive
+              ? colors.tint
+              : colors.textSecondary,
+          }
         ]}>
           {label}
         </Text>
-        {isActive && (
-          <View style={styles.stepProgressBar}>
-            <Animated.View
-              style={[
-                styles.stepProgressFill,
-                { width: '60%' },
-              ]}
-            />
-          </View>
-        )}
       </View>
     </Animated.View>
   );
@@ -218,6 +188,7 @@ function PipelineStepItem({
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 export default function TripPrepareScreen() {
   const router = useRouter();
+  const { colors, colorScheme } = useAppTheme();
   const params = useLocalSearchParams<{
     mode?: string;
     tripName?: string;
@@ -250,6 +221,20 @@ export default function TripPrepareScreen() {
   const [narrationDepth, setNarrationDepth] = useState<NarrationDepth>('standard');
   const [kidFriendly, setKidFriendly] = useState(false);
   const [language, setLanguage] = useState('en');
+  const [ttsProvider, setTtsProvider] = useState<'gemini' | 'device'>('gemini');
+
+  // Load ttsProvider from settings
+  useEffect(() => {
+    async function fetchTtsProvider() {
+      try {
+        const settings = await loadSettings();
+        setTtsProvider(settings.ttsProvider);
+      } catch (err) {
+        console.warn('Failed to load settings in prepare screen:', err);
+      }
+    }
+    fetchTtsProvider();
+  }, []);
 
   // Load preferences from existing trip if editing/resuming
   useEffect(() => {
@@ -294,10 +279,10 @@ export default function TripPrepareScreen() {
   const isReady = stage === 'ready';
 
   // ── Animations ────────────────────────────────────────────────────────────
-  const formFadeAnim = useRef(new Animated.Value(1)).current;
-  const pipelineFadeAnim = useRef(new Animated.Value(0)).current;
+  // Initialize opacity values based on the current phase at mount to prevent flakiness
+  const formFadeAnim = useRef(new Animated.Value(isPipelinePhase ? 0 : 1)).current;
+  const pipelineFadeAnim = useRef(new Animated.Value(isPipelinePhase ? 1 : 0)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(0)).current;
   const successScaleAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -312,6 +297,20 @@ export default function TripPrepareScreen() {
         Animated.timing(pipelineFadeAnim, {
           toValue: 1,
           duration: 500,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      // Fade out pipeline, fade in form
+      Animated.parallel([
+        Animated.timing(formFadeAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pipelineFadeAnim, {
+          toValue: 0,
+          duration: 300,
           useNativeDriver: true,
         }),
       ]).start();
@@ -402,23 +401,18 @@ export default function TripPrepareScreen() {
     });
   }, [trip, router]);
 
-  // ────────────────────────────────────────────────────────────────────────────
   return (
     <>
       <Stack.Screen
         options={{
           title: 'Prepare Trip',
-          headerStyle: { backgroundColor: COLORS.navy },
-          headerTintColor: COLORS.white,
+          headerStyle: { backgroundColor: colors.background },
+          headerTintColor: colors.textPrimary,
           headerShadowVisible: false,
         }}
       />
-      <View style={styles.screen}>
-        <StatusBar barStyle="light-content" />
-
-        {/* Decorative bg circles */}
-        <View style={styles.bgCircle1} />
-        <View style={styles.bgCircle2} />
+      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+        <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} />
 
         <ScrollView
           style={styles.scroll}
@@ -427,18 +421,24 @@ export default function TripPrepareScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {/* ── Trip info banner ───────────────────────────────────────── */}
-          <View style={styles.tripInfoBanner}>
+          <View style={[styles.tripInfoBanner, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
             <View style={styles.tripInfoLeft}>
-              <Text style={styles.tripInfoName}>{tripName}</Text>
-              <Text style={styles.tripInfoMode}>
-                {tripMode === 'city' ? '🏙 City Mode' : '🛣 Route Mode'}
-              </Text>
+              <Text style={[styles.tripInfoName, { color: colors.textPrimary }]}>{tripName}</Text>
+              <View style={styles.bannerRow}>
+                <SymbolView name={tripMode === 'route' ? Icons.route : Icons.city} tintColor={colors.tint} size={13} style={{ marginRight: 4 }} />
+                <Text style={[styles.tripInfoMode, { color: colors.tint }]}>
+                  {tripMode === 'city' ? 'City Mode' : 'Route Mode'}
+                </Text>
+              </View>
             </View>
             <View style={styles.tripInfoRight}>
               {tripMode === 'route' && !!originName && (
-                <Text style={styles.tripInfoRoute}>{originName}</Text>
+                <Text style={[styles.tripInfoRoute, { color: colors.textSecondary }]} numberOfLines={1}>{originName}</Text>
               )}
-              <Text style={styles.tripInfoDest}>📍 {destinationName}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end' }}>
+                <SymbolView name={Icons.mappin} tintColor={colors.textSecondary} size={13} style={{ marginRight: 4 }} />
+                <Text style={[styles.tripInfoDest, { color: colors.textSecondary }]} numberOfLines={1}>{destinationName}</Text>
+              </View>
             </View>
           </View>
 
@@ -446,43 +446,40 @@ export default function TripPrepareScreen() {
               Research Interrupted View
               ══════════════════════════════════════════════════════════════ */}
           {isInterrupted && !isEditingPreferences && (
-            <View style={styles.errorCard}>
-              <Text style={styles.errorEmoji}>⚠️</Text>
-              <Text style={styles.errorTitle}>Research Interrupted</Text>
-              <Text style={styles.errorMessage}>
+            <View style={[styles.errorCard, { backgroundColor: colors.cardBackground, borderColor: colors.destructive + '30' }]}>
+              <SymbolView name={Icons.warningTriangle} tintColor={colors.destructive} size={48} style={{ marginBottom: Spacing.md }} />
+              <Text style={[Typography.title3, { color: colors.destructive, marginBottom: Spacing.sm }]}>Research Interrupted</Text>
+              <Text style={[Typography.body, { color: colors.textSecondary, textAlign: 'center', marginBottom: Spacing.xl }]}>
                 The preparation for this trip was stopped or failed previously. You can resume researching, modify your preferences, or delete this trip.
               </Text>
               
-              <TouchableOpacity
-                style={styles.primaryButton}
+              <PrimaryButton
+                title="Resume Research"
+                icon={Icons.arrowClockwise}
                 onPress={retryPreparation}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.primaryButtonText}>🔄 Resume Research</Text>
-              </TouchableOpacity>
+                style={{ width: '100%' }}
+              />
 
-              <TouchableOpacity
-                style={[styles.retryButton, { backgroundColor: COLORS.navyLight, borderColor: COLORS.whiteAlpha20, borderWidth: 1, marginTop: 10 }]}
+              <SecondaryButton
+                title="Edit Preferences"
+                icon={Icons.pencil}
                 onPress={() => setIsEditingPreferences(true)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.retryButtonText}>✏️ Edit Preferences</Text>
-              </TouchableOpacity>
+                style={{ width: '100%', marginTop: Spacing.md }}
+              />
 
-              <TouchableOpacity
-                style={[styles.retryButton, { backgroundColor: COLORS.error, marginTop: 10 }]}
+              <DestructiveButton
+                title="Delete Trip"
+                icon={Icons.trash}
                 onPress={handleDeleteResearch}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.retryButtonText}>🗑 Delete Trip</Text>
-              </TouchableOpacity>
+                style={{ width: '100%', marginTop: Spacing.md }}
+              />
 
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => router.back()}
                 activeOpacity={0.7}
               >
-                <Text style={styles.cancelButtonText}>Go Back</Text>
+                <Text style={[Typography.subheadline, { fontWeight: '600', color: colors.textSecondary }]}>Go Back</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -493,21 +490,33 @@ export default function TripPrepareScreen() {
           {!isPipelinePhase && !isError && (!isInterrupted || isEditingPreferences) && (
             <Animated.View style={{ opacity: formFadeAnim }}>
               {/* Interest categories */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>🎯 What interests you?</Text>
-                <Text style={styles.sectionSubtitle}>Select all that apply</Text>
+              <View style={[styles.section, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+                <Text style={[Typography.headline, { color: colors.textPrimary, marginBottom: Spacing.xs }]}>What interests you?</Text>
+                <Text style={[Typography.footnote, { color: colors.textSecondary, marginBottom: Spacing.md }]}>Select all that apply</Text>
                 <View style={styles.chipsRow}>
                   {INTEREST_OPTIONS.map((opt) => {
                     const selected = interests.includes(opt.id);
                     return (
                       <TouchableOpacity
                         key={opt.id}
-                        style={[styles.chip, selected && styles.chipSelected]}
+                        style={[
+                          styles.chip,
+                          {
+                            backgroundColor: selected ? colors.tint : colors.fillTertiary,
+                            borderColor: selected ? colors.tint : colors.cardBorder,
+                          }
+                        ]}
                         onPress={() => toggleInterest(opt.id)}
                         activeOpacity={0.7}
                       >
-                        <Text style={styles.chipEmoji}>{opt.emoji}</Text>
-                        <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
+                        <SymbolView name={opt.icon} tintColor={selected ? colors.buttonPrimaryText : colors.textSecondary} size={16} />
+                        <Text style={[
+                          Typography.subheadline,
+                          {
+                            fontWeight: '600',
+                            color: selected ? colors.buttonPrimaryText : colors.textPrimary,
+                          }
+                        ]}>
                           {opt.label}
                         </Text>
                       </TouchableOpacity>
@@ -517,22 +526,41 @@ export default function TripPrepareScreen() {
               </View>
 
               {/* Narration depth */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>🎙️ Narration depth</Text>
+              <View style={[styles.section, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+                <Text style={[Typography.headline, { color: colors.textPrimary, marginBottom: Spacing.md }]}>Narration depth</Text>
                 <View style={styles.depthRow}>
                   {DEPTH_OPTIONS.map((opt) => {
                     const selected = narrationDepth === opt.id;
                     return (
                       <TouchableOpacity
                         key={opt.id}
-                        style={[styles.depthOption, selected && styles.depthOptionSelected]}
+                        style={[
+                          styles.depthOption,
+                          {
+                            backgroundColor: selected ? colors.tint : colors.fillTertiary,
+                            borderColor: selected ? colors.tint : colors.cardBorder,
+                          }
+                        ]}
                         onPress={() => setNarrationDepth(opt.id)}
                         activeOpacity={0.7}
                       >
-                        <Text style={[styles.depthLabel, selected && styles.depthLabelSelected]}>
+                        <Text style={[
+                          Typography.subheadline,
+                          {
+                            fontWeight: '700',
+                            color: selected ? colors.buttonPrimaryText : colors.textPrimary,
+                            marginBottom: 2,
+                          }
+                        ]}>
                           {opt.label}
                         </Text>
-                        <Text style={[styles.depthDesc, selected && styles.depthDescSelected]}>
+                        <Text style={[
+                          Typography.caption2,
+                          {
+                            color: selected ? colors.buttonPrimaryText : colors.textSecondary,
+                            opacity: 0.8,
+                          }
+                        ]}>
                           {opt.desc}
                         </Text>
                       </TouchableOpacity>
@@ -542,38 +570,51 @@ export default function TripPrepareScreen() {
               </View>
 
               {/* Kid-friendly toggle */}
-              <View style={styles.section}>
+              <View style={[styles.section, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
                 <View style={styles.toggleRow}>
                   <View style={styles.toggleLeft}>
-                    <Text style={styles.sectionTitle}>👶 Kid-friendly mode</Text>
-                    <Text style={styles.sectionSubtitle}>
+                    <Text style={[Typography.headline, { color: colors.textPrimary, marginBottom: Spacing.xs }]}>Kid-friendly mode</Text>
+                    <Text style={[Typography.footnote, { color: colors.textSecondary }]}>
                       Simpler language, family-safe content
                     </Text>
                   </View>
                   <Switch
                     value={kidFriendly}
                     onValueChange={setKidFriendly}
-                    trackColor={{ false: COLORS.whiteAlpha20, true: COLORS.teal }}
-                    thumbColor={kidFriendly ? COLORS.white : COLORS.whiteAlpha50}
+                    trackColor={{ false: colors.fillSecondary, true: colors.tint }}
+                    thumbColor={Platform.OS === 'ios' ? undefined : colors.backgroundElevated}
                   />
                 </View>
               </View>
 
               {/* Language picker */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>🌍 Language</Text>
+              <View style={[styles.section, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+                <Text style={[Typography.headline, { color: colors.textPrimary, marginBottom: Spacing.xs }]}>Language</Text>
+                <Text style={[Typography.footnote, { color: colors.textSecondary, marginBottom: Spacing.md }]}>Choose output narration language</Text>
                 <View style={styles.languageRow}>
                   {LANGUAGE_OPTIONS.map((opt) => {
                     const selected = language === opt.code;
                     return (
                       <TouchableOpacity
                         key={opt.code}
-                        style={[styles.langChip, selected && styles.langChipSelected]}
+                        style={[
+                          styles.langChip,
+                          {
+                            backgroundColor: selected ? colors.tintSecondary : colors.fillTertiary,
+                            borderColor: selected ? colors.tintSecondary : colors.cardBorder,
+                          }
+                        ]}
                         onPress={() => setLanguage(opt.code)}
                         activeOpacity={0.7}
                       >
                         <Text style={styles.langFlag}>{opt.flag}</Text>
-                        <Text style={[styles.langLabel, selected && styles.langLabelSelected]}>
+                        <Text style={[
+                          Typography.footnote,
+                          {
+                            fontWeight: '600',
+                            color: selected ? colors.buttonPrimaryText : colors.textPrimary,
+                          }
+                        ]}>
                           {opt.label}
                         </Text>
                       </TouchableOpacity>
@@ -583,13 +624,12 @@ export default function TripPrepareScreen() {
               </View>
 
               {/* Prepare Trip Button */}
-              <TouchableOpacity
-                style={styles.primaryButton}
+              <PrimaryButton
+                title="Prepare Trip"
+                icon={Icons.wand}
                 onPress={handlePrepareTripPress}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.primaryButtonText}>🚀 Prepare Trip</Text>
-              </TouchableOpacity>
+                style={{ marginTop: Spacing.md }}
+              />
             </Animated.View>
           )}
 
@@ -600,18 +640,18 @@ export default function TripPrepareScreen() {
             <Animated.View style={{ opacity: pipelineFadeAnim }}>
               {/* Overall progress bar */}
               <View style={styles.overallProgressContainer}>
-                <View style={styles.overallProgressTrack}>
+                <View style={[styles.overallProgressTrack, { backgroundColor: colors.fillSecondary }]}>
                   <Animated.View
-                    style={[styles.overallProgressFill, { width: progressWidth }]}
+                    style={[styles.overallProgressFill, { width: progressWidth, backgroundColor: colors.tint }]}
                   />
                 </View>
-                <Text style={styles.overallProgressLabel}>
+                <Text style={[Typography.headline, { color: colors.tint, width: 44, textAlign: 'right' }]}>
                   {Math.round(progress * 100)}%
                 </Text>
               </View>
 
               {/* Steps list */}
-              <View style={styles.stepsCard}>
+              <View style={[styles.stepsCard, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
                 {PIPELINE_STEPS.map((step) => (
                   <PipelineStepItem
                     key={step.stage}
@@ -623,43 +663,197 @@ export default function TripPrepareScreen() {
                 ))}
               </View>
 
+              {/* Dynamic Researched Places List */}
+              {/* SKELETON LOADER (when no POIs exist yet during fetching/routing) */}
+              {(!trip?.pois || trip.pois.length === 0) && (stage === 'fetching_route' || stage === 'fetching_pois' || stage === 'curating') && (
+                <View style={[styles.skeletonCard, { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder }]}>
+                  <ActivityIndicator size="small" color={colors.tint} style={{ marginRight: Spacing.md }} />
+                  <Text style={[Typography.subheadline, { color: colors.textSecondary, flex: 1 }]}>
+                    {stage === 'fetching_route' 
+                      ? 'Calculating route directions...' 
+                      : stage === 'fetching_pois' 
+                      ? 'Scanning Google Places for tourist sights...' 
+                      : 'Curation engine ranking candidate places...'}
+                  </Text>
+                </View>
+              )}
+
+              {/* LIST OF POIS */}
+              {trip?.pois && trip.pois.length > 0 && (
+                <View style={styles.poisContainer}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={[Typography.headline, { color: colors.textPrimary, fontWeight: '700' }]}>
+                      Researched Places
+                    </Text>
+                    <View style={[styles.badge, { backgroundColor: colors.tint + '15' }]}>
+                      <Text style={[Typography.caption1, { color: colors.tint, fontWeight: '700' }]}>
+                        {trip.pois.length} spots
+                      </Text>
+                    </View>
+                  </View>
+
+                  {trip.pois.map((poi, idx) => {
+                    // Compute POI status dynamically
+                    let statusLabel = 'Queued';
+                    let statusIcon = Icons.clock;
+                    let statusColor = colors.textTertiary;
+                    let isSpinning = false;
+
+                    if (stage === 'fetching_route' || stage === 'fetching_pois' || stage === 'curating') {
+                      statusLabel = 'Curating...';
+                      statusIcon = Icons.circle;
+                      statusColor = colors.textTertiary;
+                    } else if (stage === 'generating_narrations') {
+                      if (poi.narration_text) {
+                        if (poi.narration_text === 'Failed to generate narration') {
+                          statusLabel = 'Failed';
+                          statusIcon = Icons.warningTriangle;
+                          statusColor = colors.destructive;
+                        } else {
+                          statusLabel = 'Story drafted';
+                          statusIcon = Icons.docText;
+                          statusColor = colors.success;
+                        }
+                      } else {
+                        const firstUnnarratedIdx = trip.pois.findIndex(p => !p.narration_text);
+                        if (idx === firstUnnarratedIdx) {
+                          statusLabel = 'Writing story...';
+                          statusIcon = Icons.pencil;
+                          statusColor = colors.tint;
+                          isSpinning = true;
+                        }
+                      }
+                    } else if (stage === 'synthesizing_audio') {
+                      if (ttsProvider === 'gemini') {
+                        if (poi.audio_file_path) {
+                          statusLabel = 'Audio ready';
+                          statusIcon = Icons.speaker;
+                          statusColor = colors.success;
+                        } else if (poi.narration_text && poi.narration_text !== 'Failed to generate narration') {
+                          const firstUnaudioIdx = trip.pois.findIndex(p => p.narration_text && p.narration_text !== 'Failed to generate narration' && !p.audio_file_path);
+                          if (idx === firstUnaudioIdx) {
+                            statusLabel = 'Creating voice...';
+                            statusIcon = Icons.waveform;
+                            statusColor = colors.tint;
+                            isSpinning = true;
+                          }
+                        } else {
+                          statusLabel = 'Failed story';
+                          statusIcon = Icons.warningTriangle;
+                          statusColor = colors.destructive;
+                        }
+                      } else {
+                        statusLabel = 'On-device TTS';
+                        statusIcon = Icons.checkmark;
+                        statusColor = colors.success;
+                      }
+                    } else if (stage === 'caching') {
+                      if (!poi.image_url || poi.image_local_path) {
+                        statusLabel = 'Ready';
+                        statusIcon = Icons.checkmarkCircle;
+                        statusColor = colors.success;
+                      } else {
+                        const firstUncachedIdx = trip.pois.findIndex(p => p.image_url && !p.image_local_path);
+                        if (idx === firstUncachedIdx) {
+                          statusLabel = 'Caching image...';
+                          statusIcon = Icons.photoOnRect;
+                          statusColor = colors.tint;
+                          isSpinning = true;
+                        }
+                      }
+                    } else if (stage === 'ready') {
+                      statusLabel = 'Ready';
+                      statusIcon = Icons.checkmarkCircle;
+                      statusColor = colors.success;
+                    }
+
+                    const isLast = idx === trip.pois.length - 1;
+
+                    return (
+                      <View
+                        key={poi.id}
+                        style={[
+                          styles.poiRow,
+                          {
+                            backgroundColor: colors.cardBackground,
+                            borderColor: colors.cardBorder,
+                            borderBottomWidth: isLast ? StyleSheet.hairlineWidth : 0,
+                            borderTopLeftRadius: idx === 0 ? Radius.lg : 0,
+                            borderTopRightRadius: idx === 0 ? Radius.lg : 0,
+                            borderBottomLeftRadius: isLast ? Radius.lg : 0,
+                            borderBottomRightRadius: isLast ? Radius.lg : 0,
+                          }
+                        ]}
+                      >
+                        <View style={[styles.poiIconContainer, { backgroundColor: colors.fillTertiary }]}>
+                          <SymbolView name={getCategoryIcon(poi.category)} tintColor={colors.tint} size={18} />
+                        </View>
+                        
+                        <View style={styles.poiInfo}>
+                          <Text style={[Typography.subheadline, { color: colors.textPrimary, fontWeight: '600' }]} numberOfLines={1}>
+                            {poi.name}
+                          </Text>
+                          <Text style={[Typography.caption2, { color: colors.textSecondary, marginTop: 2 }]}>
+                            {poi.category.replace(/_/g, ' ')}
+                            {poi.rating > 0 ? ` • ★ ${poi.rating.toFixed(1)}` : ''}
+                          </Text>
+                        </View>
+
+                        <View style={styles.poiStatus}>
+                          {isSpinning ? (
+                            <ActivityIndicator size="small" color={colors.tint} style={{ marginRight: 6 }} />
+                          ) : (
+                            <SymbolView name={statusIcon} tintColor={statusColor} size={16} style={{ marginRight: 6 }} />
+                          )}
+                          <Text style={[Typography.caption1, { color: statusColor, fontWeight: '600' }]}>
+                            {statusLabel}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
               {/* Success state */}
               {isReady && (
                 <Animated.View
                   style={[
                     styles.successCard,
-                    { transform: [{ scale: successScaleAnim }] },
+                    {
+                      transform: [{ scale: successScaleAnim }],
+                      backgroundColor: colors.cardBackground,
+                      borderColor: colors.success + '40',
+                    },
                   ]}
                 >
-                  <Text style={styles.successEmoji}>🎉</Text>
-                  <Text style={styles.successTitle}>Trip Ready!</Text>
-                  <Text style={styles.successSubtitle}>{statusMessage}</Text>
+                  <SymbolView name={Icons.checkmarkCircle} tintColor={colors.success} size={56} style={{ marginBottom: Spacing.md }} />
+                  <Text style={[Typography.title1, { color: colors.textPrimary, marginBottom: Spacing.xs }]}>Trip Ready!</Text>
+                  <Text style={[Typography.body, { color: colors.textSecondary, marginBottom: Spacing.sm, textAlign: 'center' }]}>{statusMessage}</Text>
                   {poiCount > 0 && (
-                    <Text style={styles.successPoiCount}>
+                    <Text style={[Typography.subheadline, { color: colors.tint, fontWeight: '600', marginBottom: Spacing.md }]}>
                       {poiCount} points of interest ready to explore
                     </Text>
                   )}
-                  <View style={styles.offlineReadyBadge}>
-                    <Text style={styles.offlineReadyText}>✅ Offline Ready</Text>
+                  <View style={[styles.offlineReadyBadge, { backgroundColor: colors.success + '15', borderColor: colors.success, borderWidth: StyleSheet.hairlineWidth }]}>
+                    <Text style={[Typography.caption1, { fontWeight: '700', color: colors.success }]}>Offline Ready</Text>
                   </View>
-                  <TouchableOpacity
-                    style={styles.primaryButton}
+                  <PrimaryButton
+                    title="Start Trip"
+                    icon={Icons.trips}
                     onPress={handleStartTrip}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.primaryButtonText}>🗺️ Start Trip</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.primaryButton, { backgroundColor: COLORS.teal, marginTop: 12 }]}
+                    style={{ width: '100%' }}
+                  />
+                  <SecondaryButton
+                    title="Preview Research"
+                    icon={Icons.docText}
                     onPress={() => {
                       if (trip) {
                         router.push(`/trip/preview?tripId=${trip.id}`);
                       }
                     }}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={[styles.primaryButtonText, { color: COLORS.white }]}>📚 Preview Research</Text>
-                  </TouchableOpacity>
+                    style={{ width: '100%', marginTop: Spacing.md }}
+                  />
                 </Animated.View>
               )}
 
@@ -670,7 +864,7 @@ export default function TripPrepareScreen() {
                   onPress={cancelPreparation}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                  <Text style={[Typography.subheadline, { fontWeight: '600', color: colors.destructive }]}>Cancel</Text>
                 </TouchableOpacity>
               )}
             </Animated.View>
@@ -680,28 +874,27 @@ export default function TripPrepareScreen() {
               Error State
               ══════════════════════════════════════════════════════════════ */}
           {isError && (
-            <View style={styles.errorCard}>
-              <Text style={styles.errorEmoji}>⚠️</Text>
-              <Text style={styles.errorTitle}>Something went wrong</Text>
-              <Text style={styles.errorMessage}>{error}</Text>
-              <TouchableOpacity
-                style={styles.retryButton}
+            <View style={[styles.errorCard, { backgroundColor: colors.cardBackground, borderColor: colors.destructive + '30' }]}>
+              <SymbolView name={Icons.warningTriangle} tintColor={colors.destructive} size={48} style={{ marginBottom: Spacing.md }} />
+              <Text style={[Typography.title2, { color: colors.destructive, marginBottom: Spacing.sm }]}>Something went wrong</Text>
+              <Text style={[Typography.body, { color: colors.textSecondary, textAlign: 'center', marginBottom: Spacing.xl, lineHeight: 20 }]}>{error}</Text>
+              <PrimaryButton
+                title="Retry"
+                icon={Icons.arrowClockwise}
                 onPress={retryPreparation}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.retryButtonText}>🔄 Retry</Text>
-              </TouchableOpacity>
+                style={{ width: '100%' }}
+              />
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => router.back()}
                 activeOpacity={0.7}
               >
-                <Text style={styles.cancelButtonText}>Go Back</Text>
+                <Text style={[Typography.subheadline, { fontWeight: '600', color: colors.textSecondary }]}>Go Back</Text>
               </TouchableOpacity>
             </View>
           )}
 
-          <View style={{ height: 40 }} />
+          <View style={{ height: Spacing['2xl'] }} />
         </ScrollView>
       </View>
     </>
@@ -712,45 +905,26 @@ export default function TripPrepareScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: COLORS.navy,
-  },
-  bgCircle1: {
-    position: 'absolute',
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: COLORS.tealDark,
-    opacity: 0.07,
-    top: -60,
-    right: -80,
-  },
-  bgCircle2: {
-    position: 'absolute',
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: COLORS.gold,
-    opacity: 0.05,
-    bottom: 100,
-    left: -60,
   },
   scroll: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    paddingTop: 16,
+    paddingHorizontal: Spacing.base,
+    paddingBottom: Spacing.xl * 2,
+    paddingTop: Spacing.base,
   },
-
+  bannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
   // Trip info banner
   tripInfoBanner: {
-    backgroundColor: COLORS.navyLight,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: COLORS.whiteAlpha10,
+    borderRadius: Radius.lg,
+    padding: Spacing.base,
+    marginBottom: Spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -759,14 +933,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   tripInfoName: {
-    fontSize: 18,
+    ...Typography.headline,
     fontWeight: '800',
-    color: COLORS.white,
-    marginBottom: 4,
   },
   tripInfoMode: {
-    fontSize: 13,
-    color: COLORS.teal,
+    ...Typography.caption1,
     fontWeight: '600',
   },
   tripInfoRight: {
@@ -774,107 +945,51 @@ const styles = StyleSheet.create({
     maxWidth: '45%',
   },
   tripInfoRoute: {
-    fontSize: 12,
-    color: COLORS.whiteAlpha50,
+    ...Typography.caption2,
     marginBottom: 2,
   },
   tripInfoDest: {
-    fontSize: 13,
-    color: COLORS.whiteAlpha80,
+    ...Typography.caption1,
     fontWeight: '600',
     textAlign: 'right',
   },
 
   // Sections
   section: {
-    backgroundColor: COLORS.navyLight,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.whiteAlpha10,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.white,
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
-    fontSize: 13,
-    color: COLORS.whiteAlpha50,
-    marginBottom: 12,
+    borderRadius: Radius.lg,
+    padding: Spacing.base,
+    marginBottom: Spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
   },
 
   // Interest chips
   chipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: Spacing.sm,
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 24,
-    backgroundColor: COLORS.whiteAlpha10,
-    borderWidth: 1,
-    borderColor: COLORS.whiteAlpha20,
-    gap: 6,
-  },
-  chipSelected: {
-    backgroundColor: COLORS.tealDark,
-    borderColor: COLORS.teal,
-  },
-  chipEmoji: {
-    fontSize: 16,
-  },
-  chipLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.whiteAlpha80,
-  },
-  chipLabelSelected: {
-    color: COLORS.white,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.xs,
   },
 
   // Narration depth
   depthRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 8,
+    gap: Spacing.sm,
   },
   depthOption: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-    backgroundColor: COLORS.whiteAlpha10,
-    borderWidth: 1,
-    borderColor: COLORS.whiteAlpha20,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
-  },
-  depthOptionSelected: {
-    backgroundColor: COLORS.gold,
-    borderColor: COLORS.goldLight,
-  },
-  depthLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.whiteAlpha80,
-    marginBottom: 2,
-  },
-  depthLabelSelected: {
-    color: COLORS.navy,
-  },
-  depthDesc: {
-    fontSize: 11,
-    color: COLORS.whiteAlpha50,
-  },
-  depthDescSelected: {
-    color: COLORS.navy,
-    opacity: 0.7,
   },
 
   // Toggle
@@ -885,254 +1000,152 @@ const styles = StyleSheet.create({
   },
   toggleLeft: {
     flex: 1,
-    marginRight: 12,
+    marginRight: Spacing.md,
   },
 
   // Language chips
   languageRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 8,
+    gap: Spacing.sm,
   },
   langChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    backgroundColor: COLORS.whiteAlpha10,
-    borderWidth: 1,
-    borderColor: COLORS.whiteAlpha20,
-    gap: 6,
-  },
-  langChipSelected: {
-    backgroundColor: COLORS.purple,
-    borderColor: '#C4B5FD',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.xl,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.xs,
   },
   langFlag: {
-    fontSize: 18,
-  },
-  langLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.whiteAlpha80,
-  },
-  langLabelSelected: {
-    color: COLORS.white,
+    fontSize: 16,
   },
 
   // Buttons
-  primaryButton: {
-    backgroundColor: COLORS.gold,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 8,
-    shadowColor: COLORS.gold,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  primaryButtonText: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: COLORS.navy,
-  },
   cancelButton: {
-    paddingVertical: 14,
+    paddingVertical: Spacing.base,
     alignItems: 'center',
-    marginTop: 8,
-  },
-  cancelButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.whiteAlpha50,
-  },
-  retryButton: {
-    backgroundColor: COLORS.tealDark,
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  retryButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.white,
+    marginTop: Spacing.sm,
   },
 
   // Overall progress bar
   overallProgressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 20,
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
   },
   overallProgressTrack: {
     flex: 1,
     height: 8,
-    backgroundColor: COLORS.whiteAlpha20,
     borderRadius: 4,
     overflow: 'hidden',
   },
   overallProgressFill: {
     height: 8,
-    backgroundColor: COLORS.teal,
     borderRadius: 4,
-  },
-  overallProgressLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.teal,
-    width: 38,
-    textAlign: 'right',
   },
 
   // Steps card
   stepsCard: {
-    backgroundColor: COLORS.navyLight,
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.whiteAlpha10,
-    marginBottom: 16,
-    gap: 14,
+    borderRadius: Radius.xl,
+    padding: Spacing.base,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: Spacing.base,
+    gap: Spacing.md,
   },
 
   // Step item
   stepItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: Spacing.md,
   },
   stepIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.whiteAlpha10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  stepIconCompleted: {
-    backgroundColor: 'rgba(52, 211, 153, 0.15)',
-  },
-  stepIconActive: {
-    backgroundColor: 'rgba(6, 182, 212, 0.15)',
-    borderWidth: 1,
-    borderColor: COLORS.teal,
-  },
-  stepEmoji: {
-    fontSize: 20,
   },
   stepContent: {
     flex: 1,
   },
-  stepLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.whiteAlpha80,
-  },
-  stepLabelActive: {
-    color: COLORS.teal,
-    fontWeight: '700',
-  },
-  stepLabelCompleted: {
-    color: COLORS.green,
-  },
-  stepLabelPending: {
-    color: COLORS.whiteAlpha50,
-  },
-  stepProgressBar: {
-    height: 3,
-    backgroundColor: COLORS.whiteAlpha20,
-    borderRadius: 2,
-    marginTop: 6,
-    overflow: 'hidden',
-  },
-  stepProgressFill: {
-    height: 3,
-    backgroundColor: COLORS.teal,
-    borderRadius: 2,
-  },
 
   // Success card
   successCard: {
-    backgroundColor: COLORS.navyLight,
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(52, 211, 153, 0.3)',
-    marginBottom: 16,
-    shadowColor: COLORS.green,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: Spacing.base,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.08,
     shadowRadius: 16,
-    elevation: 8,
-  },
-  successEmoji: {
-    fontSize: 56,
-    marginBottom: 12,
-  },
-  successTitle: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: COLORS.white,
-    marginBottom: 6,
-  },
-  successSubtitle: {
-    fontSize: 15,
-    color: COLORS.whiteAlpha80,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  successPoiCount: {
-    fontSize: 14,
-    color: COLORS.teal,
-    fontWeight: '600',
-    marginBottom: 14,
+    elevation: 4,
   },
   offlineReadyBadge: {
-    backgroundColor: COLORS.green,
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginBottom: 20,
-  },
-  offlineReadyText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: COLORS.navy,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.xs,
+    borderRadius: Radius.full,
+    marginBottom: Spacing.xl,
   },
 
   // Error card
   errorCard: {
-    backgroundColor: COLORS.navyLight,
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 107, 107, 0.3)',
-    marginBottom: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: Spacing.base,
   },
-  errorEmoji: {
-    fontSize: 48,
-    marginBottom: 12,
+
+  // Dynamic Researched Places styles
+  skeletonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: Spacing.md,
   },
-  errorTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: COLORS.error,
-    marginBottom: 8,
+  poisContainer: {
+    marginTop: Spacing.md,
+    marginBottom: Spacing.lg,
   },
-  errorMessage: {
-    fontSize: 14,
-    color: COLORS.whiteAlpha80,
-    textAlign: 'center',
-    marginBottom: 16,
-    lineHeight: 20,
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  badge: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: Radius.full,
+  },
+  poiRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  poiIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  poiInfo: {
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  poiStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });

@@ -15,9 +15,9 @@
  * - src/constants/config.ts (word count targets)
  */
 
-import { POI, POICategory } from '../types/poi';
-import { TripMode, TripPreferences, NarrationDepth } from '../types/trip';
 import { CONFIG } from '../constants/config';
+import { POI, POICategory } from '../types/poi';
+import { NarrationDepth, TripMode, TripPreferences } from '../types/trip';
 
 /**
  * Builds the Gemini prompt for POI curation (selection and ranking).
@@ -153,6 +153,54 @@ Instructions:
 5. Tone & Language Complexity: ${kidFriendlyInstruction}
 6. Language: Write the entire narration in the target language: ${preferences.language}.
 7. Transition: End with a brief, natural transition phrase to prepare the user for continuing their journey (e.g., "As you continue your journey...").
+
+Here is the blueprint for how we introduce locations and points of interest (POIs) across our most popular itineraries.
+Before we get into specific locations, you need to master the mechanics of a stop. Never just walk up to a monument and start listing dates. Follow this progression every single time you introduce a new point of interest.
+1.The Anchor:Establish physical control.Get everyone gathered around you before you start talking. Position yourself so the group has their backs to the sun and the POI is clearly visible behind or beside you. Wait for eye contact.
+2.The Hook:Grab their attention.Start with a provocative question, a bizarre fact, or a sensory detail. Make them want to look at what you are showing them.
+3.The Story:Deliver the core narrative.Give them the history, the geology, or the cultural significance. Keep it to 3–5 minutes max. Use analogies to make abstract numbers (like the age of a rock or the cost of a building) relatable.
+4.The Directive:Logistics and release.Point out the bathrooms, the best photo spot, and the exact time and location they need to meet you. Only after this is clear do you release them for free time.
+
+The Urban Expeditions
+Cities overwhelm the senses. Your job here is to cut through the noise, keep the group tight, and make them look up.
+
+London
+London is all about layered history. You are introducing a city that has burned down, been bombed, and rebuilt itself over two millennia.
+- The Tower of London: Don't just list the monarchs who lived here. Frame it as the ultimate fortress of fear and power. "Look at these walls. Today it's a tourist attraction, but for 900 years, if you came through those gates, you were probably never leaving. This was a palace, a prison, and an execution block."
+- Pacing Tip: London streets are narrow and winding. Warn your group about "looking right" before crossing the street, and use the Underground as part of the cultural experience, not just transit.
+
+New York City
+New York requires high energy. You have to match the tempo of the city or your group will feel run over by it.
+- Times Square: Lean into the sensory overload. Explain the economics of the billboards and the history of how this area transformed from the gritty 1970s to the commercial hub it is today.
+- Central Park: Introduce this as an engineering marvel, not just a patch of grass.
+- "Everything you see here is manufactured. Those hills were built by hand, those lakes were dug by immigrants. It is an 843-acre illusion of wilderness right in the middle of the concrete jungle."
+
+The Wilderness Routes
+When you transition from the city to the wild, your tone needs to shift. You aren't competing with traffic anymore; you are letting the scale of nature do the heavy lifting. Your job is to translate geology and ecology into a narrative.
+
+The Grand Canyon
+- The sheer scale of the Grand Canyon breaks people's brains. They can't process it. Your introduction needs to ground them in "deep time."
+- The South Rim: Stand at the edge and use the layers of rock as a time machine.
+- "You aren't just looking at a big hole in the ground; you are looking at two billion years of Earth's history exposed. The river down there looks tiny, but it has the cutting power of liquid sandpaper."
+Safety Focus: Always brief them on hydration and the illusion of easy descents. "Going down is optional; coming up is mandatory."
+
+Mount Shasta
+Shasta isn't just a mountain; it's a dormant volcano with a massive cultural and mystical footprint.
+- The Introduction: Blend geology with local lore. Talk about the sheer prominence of the peak—how it rises 10,000 feet from the surrounding valley.
+- The Story: Mention its status in Native American traditions (like the Klamath tribes) and its modern reputation as a spiritual vortex. It gives the mountain a personality beyond just being a massive pile of snow and rock.
+
+Morro Bay
+This is your quintessential coastal ecology stop. It is quieter, focused on wildlife and the raw power of the Pacific.
+- Morro Rock: Introduce it as a volcanic plug—the frozen heart of an ancient, dead volcano. It anchors the whole bay.
+- The Wildlife: Direct their eyes to the water. Teach them how to spot the sea otters wrapped in kelp and explain the delicate balance of the estuary ecosystem. Keep your voice measured; let the sounds of the gulls and the surf be the soundtrack.
+
+Great Smoky Mountains
+The Smokies are subtle compared to the Grand Canyon, but they are the most biologically diverse area in North America.
+- The "Smoke": Answer the obvious question immediately.
+- "That blue mist hanging over the trees isn't smoke from a fire. It is actually a natural chemical fog—millions of trees exhaling volatile organic compounds that scatter blue light."
+- The Heritage: Weave in the history of the Appalachian people. When you show them an old log cabin in Cades Cove, talk about the isolation and resilience required to survive these mountains before the national park was established.
+
+One final rule: You are the thermostat, not the thermometer. If the group is tired, be the energy. If they are hyper, bring the calm. Learn the facts, but sell the experience.
 
 Return your response as a JSON object with a single key "narrationText" containing the generated narration:
 {

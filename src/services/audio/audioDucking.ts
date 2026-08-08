@@ -5,15 +5,15 @@ let InterruptionModeAndroid: any = { MixWithOthers: 0, DoNotMix: 1, DuckOthers: 
 
 try {
   const ExpoAV = require('expo-av');
-  Audio = ExpoAV.Audio;
-  if (ExpoAV.InterruptionModeIOS) {
+  Audio = ExpoAV?.Audio || null;
+  if (ExpoAV?.InterruptionModeIOS) {
     InterruptionModeIOS = ExpoAV.InterruptionModeIOS;
   }
-  if (ExpoAV.InterruptionModeAndroid) {
+  if (ExpoAV?.InterruptionModeAndroid) {
     InterruptionModeAndroid = ExpoAV.InterruptionModeAndroid;
   }
 } catch (error) {
-  console.warn('[audioDucking] expo-av is not available in this environment. Audio ducking will be disabled.', error);
+  console.warn('⚠️ [audioDucking] Failed to load expo-av module dynamically. Audio focus management will be disabled:', error);
 }
 
 /**
